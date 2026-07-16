@@ -1,11 +1,16 @@
 import Foundation
 
 public enum Labels {
-    public static func shortLabel(for limit: LimitEntry) -> String {
+    public static func windowLabel(for limit: LimitEntry) -> String {
         switch limit.kind {
         case "session": return "5h"
-        case "weekly_all": return "7d"
-        default: return limit.scopeDisplayName ?? limit.kind
+        case "weekly_all", "weekly_scoped": return "7d"
+        default:
+            switch limit.group {
+            case "session": return "5h"
+            case "weekly": return "7d"
+            default: return limit.kind
+            }
         }
     }
 

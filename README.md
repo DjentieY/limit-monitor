@@ -5,7 +5,7 @@ of your Claude 5-hour window, weekly window and promotional limits is left —
 and get a native notification the moment a window resets or hits 100%.
 
 ```
-●42% 5h·●29% 7d·●51% Fable
+5h●42% || 7d●29% || 7d●51% Fable
 ```
 
 Each limit gets its own colored dot: green &lt;50%, yellow ≥50%, orange ≥75%,

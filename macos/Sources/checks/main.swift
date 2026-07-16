@@ -70,18 +70,18 @@ check(legacy.allSatisfy { $0.resetsAt != nil }, "3. legacy resets_at parsed")
 // -- 4. Title formatting ------------------------------------------------------
 
 let segments = TitleFormatter.segments(for: limits)
-eq(segments.map(\.text), ["●10% 5h", "●23% 7d", "●39% Fable"], "4. title segments")
+eq(segments.map(\.text), ["5h●10%", "7d●23%", "7d●39% Fable"], "4. title segments")
 eq(segments.map(\.level), [Level.green, .green, .green], "4. per-segment levels green/green/green")
-eq(TitleFormatter.plainTitle(for: limits, stale: false), "●10% 5h·●23% 7d·●39% Fable",
-   "4. plain title joined by ·")
+eq(TitleFormatter.plainTitle(for: limits, stale: false), "5h●10% || 7d●23% || 7d●39% Fable",
+   "4. plain title joined by ||")
 var bumped = limits
 bumped[2].percent = 95
 let bumpedSegments = TitleFormatter.segments(for: bumped)
 eq(bumpedSegments[2].level, Level.red, "4. limit bumped to 95 → its segment red")
-eq(bumpedSegments[2].text, "●95% Fable", "4. bumped segment text")
+eq(bumpedSegments[2].text, "7d●95% Fable", "4. bumped segment text")
 eq(bumpedSegments[0].level, Level.green, "4. other segments unchanged (first)")
 eq(bumpedSegments[1].level, Level.green, "4. other segments unchanged (second)")
-check(TitleFormatter.plainTitle(for: limits, stale: true).hasPrefix("⚠●10% 5h"),
+check(TitleFormatter.plainTitle(for: limits, stale: true).hasPrefix("⚠5h●10%"),
       "4. stale/expired state adds ⚠ before first segment")
 
 // -- 5. RU labels ---------------------------------------------------------------
@@ -93,11 +93,14 @@ let unknownScoped = LimitEntry(kind: "mega_promo", percent: 5, scopeDisplayName:
 let unknownBare = LimitEntry(kind: "mega_promo", percent: 5)
 eq(Labels.menuLabel(for: unknownScoped), "Mega promo · Zap", "5. unknown kind + scope label")
 eq(Labels.menuLabel(for: unknownBare), "Mega promo", "5. unknown kind bare label (humanized)")
-eq(Labels.shortLabel(for: limits[0]), "5h", "5. short label session")
-eq(Labels.shortLabel(for: limits[1]), "7d", "5. short label weekly_all")
-eq(Labels.shortLabel(for: limits[2]), "Fable", "5. short label scoped = display_name")
-eq(Labels.shortLabel(for: unknownScoped), "Zap", "5. short label unknown w/ scope")
-eq(Labels.shortLabel(for: unknownBare), "mega_promo", "5. short label unknown = raw kind")
+eq(Labels.windowLabel(for: limits[0]), "5h", "5. window label session")
+eq(Labels.windowLabel(for: limits[1]), "7d", "5. window label weekly_all")
+eq(Labels.windowLabel(for: limits[2]), "7d", "5. window label weekly_scoped = 7d")
+eq(Labels.windowLabel(for: unknownScoped), "mega_promo", "5. window label unknown w/o group = raw kind")
+eq(Labels.windowLabel(for: unknownBare), "mega_promo", "5. window label unknown = raw kind")
+let unknownWeekly = LimitEntry(kind: "mega_promo", group: "weekly", percent: 5, scopeDisplayName: "Zap")
+eq(Labels.windowLabel(for: unknownWeekly), "7d", "5. window label unknown w/ weekly group = 7d")
+eq(TitleFormatter.segments(for: [unknownWeekly]).map(\.text), ["7d●5% Zap"], "5. unknown weekly segment")
 
 // -- 6. Reset notification planning --------------------------------------------
 

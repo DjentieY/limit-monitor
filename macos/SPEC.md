@@ -41,14 +41,15 @@ resets. Single user, local-only, no telemetry, no third-party dependencies.
   green `percent < 50`, yellow `50–74`, orange `75–89`, red `>= 90` (100 % is
   always red). A non-`"normal"` `severity` bumps the level to at least orange.
 - Status item: `NSAttributedString` title on the status button — one segment per
-  limit in API order, joined by `·`. Each segment is `●<percent>% <shortLabel>`
-  where the `●` is colored by THAT limit's level (`NSColor.systemGreen/…Yellow/
-  …Orange/…Red`) and the rest of the segment keeps the default label color.
-  Short labels: `session` → `5h`, `weekly_all` → `7d`, scoped → scope
-  `display_name` verbatim (e.g. `Fable`), unknown kind → scope name if present
-  else the raw kind. Example: `●10% 5h·●23% 7d·●39% Fable`. If data is stale
-  (last successful fetch > 10 min ago) or token expired, prepend `⚠` before the
-  first segment.
+  limit in API order, joined by ` || `. Each segment is
+  `<windowLabel>●<percent>%[ <scopeName>]` where the `●` is colored by THAT
+  limit's level (`NSColor.systemGreen/…Yellow/…Orange/…Red`) and the rest of the
+  segment keeps the default label color. Window labels: `session` → `5h`,
+  `weekly_all`/`weekly_scoped` → `7d`, unknown kind → by `group` (`session` →
+  `5h`, `weekly` → `7d`) else the raw kind. Scoped limits append the scope
+  `display_name` after the percent. Example:
+  `5h●10% || 7d●23% || 7d●39% Fable`. If data is stale (last successful fetch
+  > 10 min ago) or token expired, prepend `⚠` before the first segment.
 - Menu (rebuilt after each poll; disabled info rows on top; each info row is an
   `attributedTitle` prefixed with `● ` colored by that limit's level):
   - `● 5-часовой: 10% · сброс в 01:59 (через 2 ч 14 мин)`
@@ -173,10 +174,11 @@ every `resets_at` in the fixture (checks assert non-nil and correct ordering).
 2. All fixture `resets_at` parse to non-nil dates; session reset < weekly resets.
 3. Legacy fallback: fixture with `limits` removed synthesizes 2 entries from
    `five_hour`/`seven_day`.
-4. Title formatting: fixture → segments `●10% 5h`, `●23% 7d`, `●39% Fable`
-   joined by `·`, per-segment levels green/green/green; a limit bumped to 95
+4. Title formatting: fixture → segments `5h●10%`, `7d●23%`, `7d●39% Fable`
+   joined by ` || `, per-segment levels green/green/green; a limit bumped to 95
    makes its segment's level red (others unchanged); stale/expired state adds
-   `⚠` before the first segment.
+   `⚠` before the first segment; unknown kind with `group: weekly` gets window
+   label `7d`.
 5. Labels: RU mapping incl. unknown kind fallback.
 6. Notification planning: given fixture limits and a `now` before resets, plans 3
    scheduled reset notifications with correct (minute-rounded, canonical-stamp)

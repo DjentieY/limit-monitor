@@ -159,16 +159,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         for (index, segment) in segments.enumerated() {
             if index > 0 {
-                title.append(NSAttributedString(string: "·", attributes: [.font: titleFont]))
+                title.append(NSAttributedString(
+                    string: TitleFormatter.separator, attributes: [.font: titleFont]
+                ))
             }
+            title.append(NSAttributedString(string: segment.pre, attributes: [.font: titleFont]))
             title.append(NSAttributedString(
                 string: "●",
                 attributes: [.font: titleFont, .foregroundColor: color(for: segment.level)]
             ))
-            title.append(NSAttributedString(
-                string: String(segment.text.dropFirst()),
-                attributes: [.font: titleFont]
-            ))
+            title.append(NSAttributedString(string: segment.post, attributes: [.font: titleFont]))
         }
         button.attributedTitle = title
     }

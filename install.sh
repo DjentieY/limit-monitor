@@ -31,7 +31,7 @@ open "$HOME/Applications/$APP_NAME"
 
 cat <<'EOF'
 
-Done. Look at your menu bar: ●42% 5h·●29% 7d·...
+Done. Look at your menu bar: 5h●42% || 7d●29% || ...
 Next steps:
   1. Click "Allow" on the notification permission prompt.
   2. Enable autostart via the app menu («Запускать при входе»).

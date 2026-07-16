@@ -41,7 +41,7 @@ open "$HOME/Applications/Claude Limits.app"
 ```
 
 Must exit 0 and print a table of parsed limits plus the menu-bar title string
-(e.g. `●42% 5h·●29% 7d·●51% Fable`). This performs a real end-to-end fetch
+(e.g. `5h●42% || 7d●29% || 7d●51% Fable`). This performs a real end-to-end fetch
 against `api.anthropic.com` using the user's stored token. Never print or log
 token values.
 
