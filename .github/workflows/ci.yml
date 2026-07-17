@@ -66,6 +66,7 @@ jobs:
 
       - name: Cross-compile (all targets, CGO_ENABLED=0)
         working-directory: go
+        shell: bash
         run: |
           set -euo pipefail
           for GOOS in linux windows darwin; do
