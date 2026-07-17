@@ -34,7 +34,7 @@ enum ProvidersConfigLoader {
     }
 
     /// True when the missing path is the default location (no env override) —
-    /// --check then prints the canonical `custom: нет ~/.config/...` line.
+    /// --check then prints the canonical `custom: no ~/.config/...` line (EN).
     static func isDefaultPath(_ path: String) -> Bool {
         path == ProvidersConfigFile.path(environment: [:])
     }

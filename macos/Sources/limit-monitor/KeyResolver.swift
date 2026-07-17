@@ -8,25 +8,26 @@ import LimitMonitorCore
 enum KeyResolver {
     enum Outcome {
         case key(String)
-        /// RU reason from KeyResolutionStrings — safe to show in menu/--check.
+        /// Localized reason from KeyResolutionStrings — safe to show in menu/--check.
         case failure(String)
     }
 
     static func resolve(
         _ source: KeySource,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        _ lang: Language
     ) -> Outcome {
         switch source {
         case .literal(let value):
             let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return key.isEmpty ? .failure(KeyResolutionStrings.empty) : .key(key)
+            return key.isEmpty ? .failure(KeyResolutionStrings.text(.empty, lang)) : .key(key)
         case .env(let name):
             // Unreliable for Finder-launched apps (launchd environment) — the
             // README recommends `command` + Keychain instead.
             let key = environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return key.isEmpty ? .failure(KeyResolutionStrings.envUnset) : .key(key)
+            return key.isEmpty ? .failure(KeyResolutionStrings.text(.envUnset, lang)) : .key(key)
         case .command(let command):
-            return run(command)
+            return run(command, lang)
         }
     }
 
@@ -39,7 +40,7 @@ enum KeyResolver {
     // their own group on Darwin, so the shell's descendants die too), and the
     // watchdog trip is an unconditional failure — output of a timed-out
     // command is never accepted as a key, whatever the exit status.
-    private static func run(_ command: String) -> Outcome {
+    private static func run(_ command: String, _ lang: Language) -> Outcome {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", command]
@@ -70,7 +71,7 @@ enum KeyResolver {
             try process.run()
         } catch {
             handle.readabilityHandler = nil
-            return .failure(KeyResolutionStrings.commandFailed)
+            return .failure(KeyResolutionStrings.text(.commandFailed, lang))
         }
 
         let deadline = DispatchTime.now() + 10
@@ -87,15 +88,15 @@ enum KeyResolver {
         process.waitUntilExit()
         try? handle.close()
         guard !timedOut, process.terminationStatus == 0 else {
-            return .failure(KeyResolutionStrings.commandFailed)
+            return .failure(KeyResolutionStrings.text(.commandFailed, lang))
         }
         bufferLock.lock()
         let data = buffer
         bufferLock.unlock()
         guard let text = String(data: data, encoding: .utf8) else {
-            return .failure(KeyResolutionStrings.empty)
+            return .failure(KeyResolutionStrings.text(.empty, lang))
         }
         let key = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return key.isEmpty ? .failure(KeyResolutionStrings.empty) : .key(key)
+        return key.isEmpty ? .failure(KeyResolutionStrings.text(.empty, lang)) : .key(key)
     }
 }

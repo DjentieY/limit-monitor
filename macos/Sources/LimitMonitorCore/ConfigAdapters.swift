@@ -80,6 +80,13 @@ private func httpSuccess(_ httpStatus: Int) -> Bool {
     (200..<300).contains(httpStatus)
 }
 
+// Adapter diagnostic payloads are baked strings threaded with `lang` (design
+// R5 — a keyed reason enum is deferred). This file-local picker keeps the RU arm
+// byte-exact while adding the EN default. `HTTP N` / `code N` stay neutral.
+private func loc(_ lang: Language, en: String, ru: String) -> String {
+    lang == .en ? en : ru
+}
+
 // MARK: - OpenRouter (research/providers.md §1)
 
 public enum OpenRouterAdapter {
@@ -93,7 +100,7 @@ public enum OpenRouterAdapter {
     /// GET /api/v1/key. `data.limit` set → ONE percent entry with a window label
     /// from `limit_reset`; `limit` null → the caller falls back to /credits.
     /// All numeric fields are nullable. NEVER print `data.label` (echoes the key).
-    public static func parseKey(data: Data, httpStatus: Int, provider: ConfiguredProvider) -> AdapterResult {
+    public static func parseKey(data: Data, httpStatus: Int, provider: ConfiguredProvider, _ lang: Language) -> AdapterResult {
         let root = jsonObject(data)
         if let root, isBlockedBody(root) { return .state(.blocked) }
         if authFailure(httpStatus) {
@@ -101,12 +108,14 @@ public enum OpenRouterAdapter {
             // Cloudflare HTML challenge (transient WAF noise) — a real
             // OpenRouter bad key answers with a JSON error envelope. Map to a
             // fetch error (v0.2 grace applies), not to badCredentials.
-            guard root != nil else { return .state(.fetchError("HTTP \(httpStatus) (не-JSON ответ)")) }
-            return .state(.badKey("ключ отклонён"))
+            guard root != nil else {
+                return .state(.fetchError(loc(lang, en: "HTTP \(httpStatus) (non-JSON response)", ru: "HTTP \(httpStatus) (не-JSON ответ)")))
+            }
+            return .state(.badKey(loc(lang, en: "key rejected", ru: "ключ отклонён")))
         }
         guard httpSuccess(httpStatus) else { return .state(.fetchError("HTTP \(httpStatus)")) }
         guard let payload = root?["data"] as? [String: Any] else {
-            return .state(.parseError("нет data в ответе /key"))
+            return .state(.parseError(loc(lang, en: "no data in the /key response", ru: "нет data в ответе /key")))
         }
         guard let limit = JSONPath.decimal(payload["limit"]), limit > 0,
               let remaining = JSONPath.decimal(payload["limit_remaining"]) else {
@@ -131,13 +140,15 @@ public enum OpenRouterAdapter {
     /// GET /api/v1/credits. Balance = total_credits - total_usage (Decimal),
     /// preferring the optional `data.remaining_balance`. 401/403 → info state,
     /// not a failure (the key simply cannot see credits).
-    public static func parseCredits(data: Data, httpStatus: Int, provider: ConfiguredProvider) -> AdapterResult {
+    public static func parseCredits(data: Data, httpStatus: Int, provider: ConfiguredProvider, _ lang: Language) -> AdapterResult {
         let root = jsonObject(data)
         if let root, isBlockedBody(root) { return .state(.blocked) }
-        if authFailure(httpStatus) { return .state(.info("баланс недоступен этому ключу")) }
+        if authFailure(httpStatus) {
+            return .state(.info(loc(lang, en: "balance not available for this key", ru: "баланс недоступен этому ключу")))
+        }
         guard httpSuccess(httpStatus) else { return .state(.fetchError("HTTP \(httpStatus)")) }
         guard let payload = root?["data"] as? [String: Any] else {
-            return .state(.parseError("нет data в ответе /credits"))
+            return .state(.parseError(loc(lang, en: "no data in the /credits response", ru: "нет data в ответе /credits")))
         }
         let balance: Decimal
         if let remaining = JSONPath.decimal(payload["remaining_balance"]) {
@@ -146,7 +157,7 @@ public enum OpenRouterAdapter {
                   let usage = JSONPath.decimal(payload["total_usage"]) {
             balance = credits - usage
         } else {
-            return .state(.parseError("нет total_credits/total_usage"))
+            return .state(.parseError(loc(lang, en: "no total_credits/total_usage", ru: "нет total_credits/total_usage")))
         }
         return .entries([ConfigEntryFactory.balanceEntry(
             provider: provider,
@@ -159,14 +170,14 @@ public enum OpenRouterAdapter {
 // MARK: - DeepSeek (§2: amounts are decimal STRINGS; prefer the USD entry)
 
 public enum DeepSeekAdapter {
-    public static func parse(data: Data, httpStatus: Int, provider: ConfiguredProvider) -> AdapterResult {
-        if authFailure(httpStatus) { return .state(.badKey("ключ отклонён")) }
+    public static func parse(data: Data, httpStatus: Int, provider: ConfiguredProvider, _ lang: Language) -> AdapterResult {
+        if authFailure(httpStatus) { return .state(.badKey(loc(lang, en: "key rejected", ru: "ключ отклонён"))) }
         guard httpSuccess(httpStatus) else { return .state(.fetchError("HTTP \(httpStatus)")) }
-        guard let root = jsonObject(data) else { return .state(.parseError("не JSON")) }
+        guard let root = jsonObject(data) else { return .state(.parseError(loc(lang, en: "not JSON", ru: "не JSON"))) }
         let infos = (root["balance_infos"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
         let chosen = infos.first { ($0["currency"] as? String)?.uppercased() == "USD" } ?? infos.first
         guard let info = chosen, let amount = JSONPath.decimal(info["total_balance"]) else {
-            return .state(.parseError("нет balance_infos.total_balance"))
+            return .state(.parseError(loc(lang, en: "no balance_infos.total_balance", ru: "нет balance_infos.total_balance")))
         }
         return .entries([ConfigEntryFactory.balanceEntry(
             provider: provider,
@@ -180,19 +191,19 @@ public enum DeepSeekAdapter {
 // MARK: - Moonshot Kimi (§3: envelope; currency by host; regional keys)
 
 public enum MoonshotAdapter {
-    public static func parse(data: Data, httpStatus: Int, provider: ConfiguredProvider) -> AdapterResult {
+    public static func parse(data: Data, httpStatus: Int, provider: ConfiguredProvider, _ lang: Language) -> AdapterResult {
         let root = jsonObject(data)
         if let error = root?["error"] as? [String: Any] {
             if error["type"] as? String == "invalid_authentication_error" {
-                return .state(.badKey("ключ отклонён (нужен platform-ключ этого региона)"))
+                return .state(.badKey(loc(lang, en: "key rejected (need a platform key for this region)", ru: "ключ отклонён (нужен platform-ключ этого региона)")))
             }
-            return .state(.parseError((error["type"] as? String) ?? "ошибка API"))
+            return .state(.parseError((error["type"] as? String) ?? loc(lang, en: "API error", ru: "ошибка API")))
         }
-        if authFailure(httpStatus) { return .state(.badKey("ключ отклонён")) }
+        if authFailure(httpStatus) { return .state(.badKey(loc(lang, en: "key rejected", ru: "ключ отклонён"))) }
         guard httpSuccess(httpStatus) else { return .state(.fetchError("HTTP \(httpStatus)")) }
         guard let payload = root?["data"] as? [String: Any],
               let amount = JSONPath.decimal(payload["available_balance"]) else {
-            return .state(.parseError("нет data.available_balance"))
+            return .state(.parseError(loc(lang, en: "no data.available_balance", ru: "нет data.available_balance")))
         }
         return .entries([ConfigEntryFactory.balanceEntry(
             provider: provider,
@@ -205,22 +216,22 @@ public enum MoonshotAdapter {
 // MARK: - Zhipu GLM (§4: errors arrive as HTTP 200; percentage is percent USED)
 
 public enum ZhipuAdapter {
-    public static func parse(data: Data, httpStatus: Int, provider: ConfiguredProvider) -> AdapterResult {
+    public static func parse(data: Data, httpStatus: Int, provider: ConfiguredProvider, _ lang: Language) -> AdapterResult {
         let root = jsonObject(data)
         // Error envelope first — zhipu errors come with HTTP 200.
         if let root, JSONPath.bool(root["success"]) == false {
             let code = JSONPath.int(root["code"])
-            if code == 1001 { return .state(.badKey("ключ отклонён")) }
+            if code == 1001 { return .state(.badKey(loc(lang, en: "key rejected", ru: "ключ отклонён"))) }
             if code == 500, ((root["msg"] as? String) ?? "").lowercased().contains("coding plan") {
                 return .state(.noPlan)
             }
             return .state(.parseError("code \(code.map(String.init) ?? "—")"))
         }
-        if authFailure(httpStatus) { return .state(.badKey("ключ отклонён")) }
+        if authFailure(httpStatus) { return .state(.badKey(loc(lang, en: "key rejected", ru: "ключ отклонён"))) }
         guard httpSuccess(httpStatus) else { return .state(.fetchError("HTTP \(httpStatus)")) }
         guard let payload = root?["data"] as? [String: Any],
               let rawLimits = payload["limits"] as? [Any] else {
-            return .state(.parseError("нет data.limits"))
+            return .state(.parseError(loc(lang, en: "no data.limits", ru: "нет data.limits")))
         }
         var entries: [LimitEntry] = []
         for rawItem in rawLimits {
@@ -282,14 +293,14 @@ public enum ZhipuAdapter {
 // MARK: - Generic engine (generic-http + expanded siliconflow/novita presets)
 
 public enum GenericAdapter {
-    public static func parse(data: Data, httpStatus: Int, provider: ConfiguredProvider) -> AdapterResult {
-        if authFailure(httpStatus) { return .state(.badKey("ключ отклонён")) }
+    public static func parse(data: Data, httpStatus: Int, provider: ConfiguredProvider, _ lang: Language) -> AdapterResult {
+        if authFailure(httpStatus) { return .state(.badKey(loc(lang, en: "key rejected", ru: "ключ отклонён"))) }
         guard httpSuccess(httpStatus) else { return .state(.fetchError("HTTP \(httpStatus)")) }
         guard let root = try? JSONSerialization.jsonObject(with: data) else {
-            return .state(.parseError("не JSON"))
+            return .state(.parseError(loc(lang, en: "not JSON", ru: "не JSON")))
         }
         guard let extract = provider.extract else {
-            return .state(.configError("extract не задан"))
+            return .state(.configError(loc(lang, en: "extract not set", ru: "extract не задан")))
         }
         let okFlag = extract.okFlagPath.flatMap { JSONPath.bool(at: $0, in: root) }
         let currency = provider.display?.currency ?? "USD"
@@ -298,7 +309,7 @@ public enum GenericAdapter {
         // (limit > 0) → percent-mode on used share; balance alone → balance-mode.
         if let percentPath = extract.percentUsedPath {
             guard let used = JSONPath.decimal(at: percentPath, in: root) else {
-                return .state(.parseError("нет поля \(percentPath)"))
+                return .state(.parseError(loc(lang, en: "no field \(percentPath)", ru: "нет поля \(percentPath)")))
             }
             return .entries([ConfigEntryFactory.percentEntry(
                 provider: provider,
@@ -307,10 +318,10 @@ public enum GenericAdapter {
             )])
         }
         guard let balanceSpec = extract.balance else {
-            return .state(.configError("extract: нужен balance или percentUsed"))
+            return .state(.configError(loc(lang, en: "extract: need balance or percentUsed", ru: "extract: нужен balance или percentUsed")))
         }
         guard let balance = balanceSpec.resolve(in: root) else {
-            return .state(.parseError("нет поля \(balanceSpec.path)"))
+            return .state(.parseError(loc(lang, en: "no field \(balanceSpec.path)", ru: "нет поля \(balanceSpec.path)")))
         }
         if let limitSpec = extract.limit, let limit = limitSpec.resolve(in: root), limit > 0 {
             let percent = JSONPath.roundedInt((limit - balance) / limit * 100)

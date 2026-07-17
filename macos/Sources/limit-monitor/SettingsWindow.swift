@@ -2,11 +2,12 @@ import AppKit
 import LimitMonitorCore
 
 // Settings window (SPEC v0.5): one reusable NSWindow, fixed width ~380, not
-// resizable. Section «Провайдеры» — a checkbox per known provider (built-ins
+// resizable. The "Providers" section — a checkbox per known provider (built-ins
 // always; providers.json entries by name, config-disabled ones shown
-// unchecked-and-disabled) + the config-path hint line; section «Общие» —
-// two-way mirrors of the menu toggles. Plain AppKit, no SwiftUI. The content
-// view is constructed from a Model so --ui-smoke can build it headlessly.
+// unchecked-and-disabled) + the config-path hint line; the "General" section —
+// two-way mirrors of the menu toggles. Plain AppKit, no SwiftUI. Chrome strings
+// are localized via ChromeStr(appLanguage) (SPEC v0.6). The content view is
+// constructed from a Model so --ui-smoke can build it headlessly.
 final class SettingsWindowController: NSObject {
     struct ProviderRow {
         /// nil → an `enabled: false` providers.json entry (not toggleable).
@@ -85,7 +86,7 @@ final class SettingsWindowController: NSObject {
             backing: .buffered,
             defer: false
         )
-        window.title = "Limit Monitor — настройки"
+        window.title = ChromeStr.settingsTitle.text(appLanguage)
         window.isReleasedWhenClosed = false
         window.contentView = content
         window.setContentSize(content.frame.size)
@@ -104,7 +105,7 @@ final class SettingsWindowController: NSObject {
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        stack.addArrangedSubview(sectionLabel("Провайдеры"))
+        stack.addArrangedSubview(sectionLabel(ChromeStr.providersSection.text(appLanguage)))
         for row in model.providers {
             let button = NSButton(
                 checkboxWithTitle: row.title,
@@ -124,10 +125,10 @@ final class SettingsWindowController: NSObject {
         stack.setCustomSpacing(14, after: stack.arrangedSubviews[stack.arrangedSubviews.count - 1])
 
         stack.addArrangedSubview(separator())
-        stack.addArrangedSubview(sectionLabel("Общие"))
+        stack.addArrangedSubview(sectionLabel(ChromeStr.generalSection.text(appLanguage)))
 
         let notify = NSButton(
-            checkboxWithTitle: "Уведомления о лимитах",
+            checkboxWithTitle: ChromeStr.notifications.text(appLanguage),
             target: self, action: #selector(notifyToggled(_:))
         )
         notify.state = model.notifyOn ? .on : .off
@@ -135,19 +136,19 @@ final class SettingsWindowController: NSObject {
         stack.addArrangedSubview(notify)
 
         let login = NSButton(
-            checkboxWithTitle: "Запускать при входе",
+            checkboxWithTitle: ChromeStr.launchAtLogin.text(appLanguage),
             target: self, action: #selector(loginToggled(_:))
         )
         login.state = model.loginOn ? .on : .off
         login.isEnabled = model.loginAvailable
         if !model.loginAvailable {
-            login.toolTip = "доступно только из установленного Limit Monitor.app"
+            login.toolTip = ChromeStr.loginUnavailableTooltip.text(appLanguage)
         }
         loginButton = login
         stack.addArrangedSubview(login)
 
         let card = NSButton(
-            checkboxWithTitle: "Виджет на рабочем столе",
+            checkboxWithTitle: ChromeStr.desktopCard.text(appLanguage),
             target: self, action: #selector(cardToggled(_:))
         )
         card.state = model.desktopCardOn ? .on : .off
@@ -194,7 +195,7 @@ final class SettingsWindowController: NSObject {
         path.toolTip = model.configPath
         path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let reveal = NSButton(title: "Показать в Finder", target: self, action: #selector(revealTapped(_:)))
+        let reveal = NSButton(title: ChromeStr.showInFinder.text(appLanguage), target: self, action: #selector(revealTapped(_:)))
         reveal.bezelStyle = .rounded
         reveal.controlSize = .small
         reveal.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)

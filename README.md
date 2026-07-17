@@ -145,11 +145,17 @@ entry ships `"enabled": false`, flip on the ones you use.
 
 After every poll (and after every successful `--check`) the app atomically
 writes `~/Library/Application Support/limit-monitor/widget-snapshot.json` —
-version, `generatedAt`, and per provider the labels, percents/balances, level
-names and reset times. Numbers and timestamps only, never credentials.
+version, `generatedAt`, and per provider a set of **neutral structural fields**:
+`kind`, `scopeName`, `level`, `percent`/balance `text`, `windowLabel`,
+`windowMinutes` and `resetsAt` (ISO UTC). Numbers, neutral tokens and timestamps
+only — never credentials and **no localized display strings**. Agents should key
+off the structural fields (`kind` / `scopeName` / `level` / `percent` /
+`resetsAt`); there is no language-bearing `label` field to grep (dropped in
+schema v2 — readers reconstruct labels themselves).
 
-- `limit-monitor --status` — human-readable table from that snapshot
-  (header says `(устарело)` when the data is older than 15 minutes);
+- `limit-monitor --status` — human-readable table from that snapshot, rendered in
+  your system language (English by default, Russian on a Russian system; the
+  header suffix is `(stale)` / `(устарело)` when the data is older than 15 min);
 - `limit-monitor --status --json` — the snapshot verbatim, for scripts.
 
 Both read the local file and make **no network calls**, so agents can poll
@@ -177,7 +183,9 @@ plugin (`~/SwiftBar/limits.1m.sh`, `chmod +x`) is one line:
   widget requires an Apple-signed build — recipe conserved in
   [research/widget.md](research/widget.md))
 - [ ] **Cross-platform core** — shared Go core + Windows/Linux tray apps
-- [ ] UI localization (menu is currently Russian) and a README screenshot
+- [x] **UI localization** — English by default, Russian automatically on a
+  Russian system (menu, notifications, settings, desktop card, `--status`)
+- [ ] A README screenshot
 
 ## Install (macOS)
 

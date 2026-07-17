@@ -1,10 +1,14 @@
 import Foundation
 
-/// Widget-ready snapshot (SPEC v0.5, schema v1). Written atomically by the
-/// shell to ~/Library/Application Support/limit-monitor/widget-snapshot.json
-/// after every poll cycle and by `--check` on success; consumed by
-/// `--status [--json]` and external integrations (SwiftBar/Raycast/agents).
-/// Carries numbers, labels and ISO-8601 UTC times ONLY — never credentials.
+/// Widget-ready snapshot (SPEC v0.6, schema v2 — fully NEUTRAL). Written
+/// atomically by the shell to ~/Library/Application Support/limit-monitor/
+/// widget-snapshot.json after every poll cycle and by `--check` on success;
+/// consumed by `--status [--json]` and external integrations
+/// (SwiftBar/Raycast/agents). Carries numbers, neutral structural fields and
+/// ISO-8601 UTC times ONLY — never credentials, never a localized string. Two
+/// writers (GUI in system locale, `--check` pinned to EN) must produce
+/// byte-identical files, so labels are reconstructed at each reader's render
+/// from the neutral fields (`kind`/`scopeName`/`windowMinutes`/…).
 public struct WidgetSnapshot: Codable, Equatable {
     public struct ProviderEntry: Codable, Equatable {
         public var id: String
@@ -25,10 +29,16 @@ public struct WidgetSnapshot: Codable, Equatable {
 
     public struct LimitRow: Codable, Equatable {
         public var kind: String
-        /// RU menu label ("5-часовой", "DeepSeek").
-        public var label: String
+        /// Neutral scope/model brand name ("Fable", "Spark") for scoped rows;
+        /// nil when not scoped. Replaces the dropped localized `label` (v0.6).
+        public var scopeName: String?
         /// Bar window label ("5h"); absent for balance/∞ rows without one.
         public var windowLabel: String?
+        /// Raw window size in minutes — REQUIRED so codex/config windowed labels
+        /// are classified at ±60/±1440 tolerance at render (which the rounded
+        /// `windowLabel` loses); nil when unknown (e.g. claude's kind-derived
+        /// windows).
+        public var windowMinutes: Int?
         /// Present for percent entries only (balance/∞ rows carry just `text`).
         public var percent: Int?
         /// Display value: "9%" / "$23.45" / "∞".
@@ -41,8 +51,9 @@ public struct WidgetSnapshot: Codable, Equatable {
 
         public init(
             kind: String,
-            label: String,
+            scopeName: String? = nil,
             windowLabel: String? = nil,
+            windowMinutes: Int? = nil,
             percent: Int? = nil,
             text: String,
             level: String,
@@ -50,8 +61,9 @@ public struct WidgetSnapshot: Codable, Equatable {
             exhausted: Bool
         ) {
             self.kind = kind
-            self.label = label
+            self.scopeName = scopeName
             self.windowLabel = windowLabel
+            self.windowMinutes = windowMinutes
             self.percent = percent
             self.text = text
             self.level = level
@@ -60,7 +72,7 @@ public struct WidgetSnapshot: Codable, Equatable {
         }
     }
 
-    public static let currentVersion = 1
+    public static let currentVersion = 2
     /// `generatedAt` older than this against a passed `now` → snapshot is stale.
     public static let staleAfter: TimeInterval = 15 * 60
 
@@ -114,8 +126,9 @@ public struct WidgetSnapshot: Codable, Equatable {
         let isPercent = limit.balanceText == nil && !limit.unlimited
         return LimitRow(
             kind: limit.kind,
-            label: Labels.menuLabel(for: limit),
+            scopeName: limit.scopeDisplayName,
             windowLabel: windowLabel(for: limit),
+            windowMinutes: limit.windowMinutes,
             percent: isPercent ? limit.percent : nil,
             text: limit.balanceText ?? (limit.unlimited ? "∞" : "\(limit.percent)%"),
             level: limit.level.name,
