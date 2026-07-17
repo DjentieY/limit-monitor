@@ -1,5 +1,5 @@
 import Foundation
-import ClaudeLimitsCore
+import LimitMonitorCore
 
 enum CredentialsProvider {
     static func load() -> (creds: Credentials, source: String)? {

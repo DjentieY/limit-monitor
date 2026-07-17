@@ -1,11 +1,11 @@
 #!/bin/sh
-# limit-monitor installer (macOS): builds Claude Limits.app from source and
+# limit-monitor installer (macOS): builds Limit Monitor.app from source and
 # installs it into ~/Applications. Building locally means no quarantine
 # attribute is ever set, so Gatekeeper is not involved.
 set -eu
 
 REPO="https://github.com/DjentieY/limit-monitor"
-APP_NAME="Claude Limits.app"
+APP_NAME="Limit Monitor.app"
 
 err() { printf 'error: %s\n' "$1" >&2; exit 1; }
 
@@ -31,9 +31,11 @@ open "$HOME/Applications/$APP_NAME"
 
 cat <<'EOF'
 
-Done. Look at your menu bar: 5h●42% || 7d●29% || ...
+Done. Look at your menu bar: 5h●42% │ 7d●29% │ ...
+(with Codex/Cursor logged in too: Cl·5h●42% │ 7d●29% ‖ Cx·5h●12% ‖ Cu·Auto●2% │ API●6%)
 Next steps:
   1. Click "Allow" on the notification permission prompt.
   2. Enable autostart via the app menu («Запускать при входе»).
-If the bar shows ⚠ — your Claude Code token expired; just use Claude Code once.
+If the bar shows ⚠ — that provider's token expired; just use Claude Code
+(run codex, open Cursor) once and it refreshes itself.
 EOF

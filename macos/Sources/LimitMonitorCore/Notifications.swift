@@ -39,11 +39,25 @@ public enum NotificationPlanner {
     }
 
     public static func resetIdentifier(for limit: LimitEntry) -> String {
-        "reset|\(limit.kind)|\(limit.scopeDisplayName ?? "")|\(normalizedResetStamp(limit.resetsAt))"
+        "reset|\(limit.provider)|\(limit.kind)|\(limit.scopeDisplayName ?? "")|\(normalizedResetStamp(limit.resetsAt))"
     }
 
     public static func exhaustedIdentifier(for limit: LimitEntry) -> String {
-        "exhausted|\(limit.kind)|\(limit.scopeDisplayName ?? "")|\(normalizedResetStamp(limit.resetsAt))"
+        "exhausted|\(limit.provider)|\(limit.kind)|\(limit.scopeDisplayName ?? "")|\(normalizedResetStamp(limit.resetsAt))"
+    }
+
+    /// Provider segment of a reset|/exhausted| identifier; legacy v0.1 4-part
+    /// identifiers (no provider segment) belong to claude.
+    public static func identifierProvider(_ identifier: String) -> String {
+        let parts = identifier.split(separator: "|", omittingEmptySubsequences: false)
+        return parts.count >= 5 ? String(parts[1]) : Provider.claude
+    }
+
+    /// Parsed stamp (last segment) of an identifier; nil when empty or unparseable.
+    public static func identifierStampDate(_ identifier: String) -> Date? {
+        let parts = identifier.split(separator: "|", omittingEmptySubsequences: false)
+        guard parts.count >= 4, let stamp = parts.last else { return nil }
+        return ISODateParser.parse(String(stamp))
     }
 
     public static func plan(
@@ -54,11 +68,12 @@ public enum NotificationPlanner {
         var scheduled: [PlannedReset] = []
         var immediate: [PlannedExhaustion] = []
         for limit in limits {
+            if limit.unlimited { continue }
             if let date = limit.resetsAt, date > now, limit.percent >= 1 {
                 scheduled.append(PlannedReset(
                     identifier: resetIdentifier(for: limit),
                     fireDate: date.addingTimeInterval(5),
-                    title: "Лимиты Claude обновились",
+                    title: Labels.resetTitle(forProvider: limit.provider),
                     body: Labels.resetBody(for: limit)
                 ))
             }
@@ -79,11 +94,15 @@ public enum NotificationPlanner {
                 }
             }
         }
+        // Prune persisted identifiers. The stamp is always the LAST segment, which also
+        // keeps legacy v0.1 4-part keys (no provider segment) from crashing or sticking:
+        // parseable stamps prune once passed, anything else is dropped as soon as no
+        // currently-exhausted limit produces the same identifier.
         var pruned = alreadyNotified
         let stillExhausted = Set(limits.filter(\.isExhausted).map { exhaustedIdentifier(for: $0) })
         for key in alreadyNotified.keys {
             let parts = key.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
-            if parts.count >= 4, let date = ISODateParser.parse(parts[3]) {
+            if parts.count >= 4, let stamp = parts.last, let date = ISODateParser.parse(stamp) {
                 if date <= now { pruned.removeValue(forKey: key) }
             } else if !stillExhausted.contains(key) {
                 pruned.removeValue(forKey: key)

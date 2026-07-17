@@ -17,6 +17,13 @@ public enum TimeFormat {
         return f
     }()
 
+    private static let dayMonthFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = ruLocale
+        f.dateFormat = "d MMM"
+        return f
+    }()
+
     public static func clock(_ date: Date) -> String {
         clockFormatter.string(from: date)
     }
@@ -28,8 +35,16 @@ public enum TimeFormat {
 
     public static func absolute(_ date: Date, now: Date = Date()) -> String {
         if isNear(date, now: now) { return "в \(clockFormatter.string(from: date))" }
-        let weekday = weekdayFormatter.string(from: date).lowercased(with: ruLocale)
-        return "\(weekday) \(clockFormatter.string(from: date))"
+        if date.timeIntervalSince(now) < 7 * 24 * 3600 {
+            let weekday = weekdayFormatter.string(from: date).lowercased(with: ruLocale)
+            return "\(weekday) \(clockFormatter.string(from: date))"
+        }
+        // Beyond a week (cursor billing cycles) a weekday alone is ambiguous:
+        // "7 авг 08:27" (ru_RU abbreviates months with a trailing dot — drop it).
+        let dayMonth = dayMonthFormatter.string(from: date)
+            .lowercased(with: ruLocale)
+            .replacingOccurrences(of: ".", with: "")
+        return "\(dayMonth) \(clockFormatter.string(from: date))"
     }
 
     public static func relative(_ date: Date, now: Date = Date()) -> String {

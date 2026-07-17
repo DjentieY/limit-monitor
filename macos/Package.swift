@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "claude-limits",
+    name: "limit-monitor",
     platforms: [.macOS(.v13)],
     targets: [
-        .target(name: "ClaudeLimitsCore"),
-        .executableTarget(name: "claude-limits", dependencies: ["ClaudeLimitsCore"]),
-        .executableTarget(name: "checks", dependencies: ["ClaudeLimitsCore"]),
+        .target(name: "LimitMonitorCore"),
+        .executableTarget(name: "limit-monitor", dependencies: ["LimitMonitorCore"]),
+        .executableTarget(name: "checks", dependencies: ["LimitMonitorCore"]),
     ]
 )

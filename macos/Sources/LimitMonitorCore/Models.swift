@@ -31,6 +31,7 @@ public enum Level: Int, Comparable {
 }
 
 public struct LimitEntry: Equatable {
+    public var provider: String
     public var kind: String
     public var group: String?
     public var percent: Int
@@ -38,9 +39,14 @@ public struct LimitEntry: Equatable {
     public var resetsAtRaw: String?
     public var resetsAt: Date?
     public var scopeDisplayName: String?
+    public var windowMinutes: Int?
+    /// Renders as ∞ (green) and is excluded from notification planning —
+    /// cursor's `isUnlimited` plan and null/0-limit on-demand.
+    public var unlimited: Bool
     public var isActive: Bool
 
     public init(
+        provider: String = Provider.claude,
         kind: String,
         group: String? = nil,
         percent: Int,
@@ -48,8 +54,11 @@ public struct LimitEntry: Equatable {
         resetsAtRaw: String? = nil,
         resetsAt: Date? = nil,
         scopeDisplayName: String? = nil,
+        windowMinutes: Int? = nil,
+        unlimited: Bool = false,
         isActive: Bool = false
     ) {
+        self.provider = provider
         self.kind = kind
         self.group = group
         self.percent = percent
@@ -57,6 +66,8 @@ public struct LimitEntry: Equatable {
         self.resetsAtRaw = resetsAtRaw
         self.resetsAt = resetsAt
         self.scopeDisplayName = scopeDisplayName
+        self.windowMinutes = windowMinutes
+        self.unlimited = unlimited
         self.isActive = isActive
     }
 

@@ -1,0 +1,20 @@
+{
+  "primary": {
+    "percent_left": 88,
+    "reset_time_ms": 1784210400000,
+    "limit_window_seconds": 18000
+  },
+  "secondary": {
+    "percent_left": 60,
+    "reset_time_ms": 1784635200000,
+    "limit_window_seconds": 604800
+  },
+  "additional_rate_limits": [
+    {
+      "label": "Spark",
+      "percent_left": 45,
+      "reset_time_ms": 1784635200000,
+      "limit_window_seconds": 604800
+    }
+  ]
+}

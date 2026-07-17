@@ -200,3 +200,254 @@ every `resets_at` in the fixture (checks assert non-nil and correct ordering).
   UserNotifications, ServiceManagement.
 - No force unwraps outside `checks`; no `print` of secrets; concise code, no
   comment noise. Menu strings exactly as specified (Russian).
+
+---
+
+# v0.2 — Multi-provider + Codex adapter + rename (2026-07-16)
+
+This section SUPERSEDES specific v0.1 points where stated. Everything not
+mentioned stays as specified above.
+
+## Rename (supersedes bundle/target naming above)
+
+- App: `Limit Monitor.app`, `CFBundleName=Limit Monitor`,
+  `CFBundleIdentifier=com.vladlaiho.limit-monitor`, executable target and binary
+  `limit-monitor` (was `claude-limits`), Core module `LimitMonitorCore` (was
+  `ClaudeLimitsCore`). `checks` target keeps its name.
+- `make_app.sh --install` removes BOTH `~/Applications/Claude Limits.app` (old)
+  and `~/Applications/Limit Monitor.app` before `ditto`, and kills running
+  instances of both binary names. Loss of the old UserDefaults domain is
+  accepted (worst case: one duplicate exhaustion notification after upgrade).
+- Update repo-root `README.md`, `install.sh`, `llms-install.md`: new app/binary
+  paths (`"$HOME/Applications/Limit Monitor.app/Contents/MacOS/limit-monitor"
+  --check`), uninstall covers both app names, features mention Codex.
+
+## Multi-provider architecture
+
+- Providers: `claude` (existing behavior) and `codex`. A provider is ACTIVE when
+  its credential artifact exists: claude — Keychain item or
+  `~/.claude/.credentials.json`; codex — `$CODEX_HOME/auth.json` (default
+  `~/.codex/auth.json`) containing `tokens.access_token`. An `auth.json` with
+  only `OPENAI_API_KEY` = API-key mode → provider INACTIVE with reason, shown as
+  a disabled menu row `Codex: API-key режим — план-лимитов нет`.
+- `LimitEntry` gains `provider: String` (`"claude"`/`"codex"`).
+- Notification identifiers gain a provider segment (supersedes v0.1 format):
+  `reset|<provider>|<kind>|<scopeName>|<stamp>` and
+  `exhausted|<provider>|<kind>|<scopeName>|<stamp>`. Legacy 4-part keys persisted
+  in `exhaustedNotified` must not crash pruning: parseable-stamp keys prune when
+  passed; the rest are dropped when no current identifier matches.
+- Polling: independent per provider — claude every 60 s (unchanged), codex every
+  180 s (gentler: WAF sensitivity). One provider failing/stale must not mark the
+  other stale. First fetch of each at launch and on wake.
+- Display order: claude limits first, then codex.
+- **Segment separator** (supersedes v0.1 `·` and the ` || ` interim): segments
+  within a provider are joined by ` │ ` (U+2502), `TitleFormatter.separator`.
+  Provider groups are joined by ` ‖ ` (U+2016), `TitleFormatter.providerSeparator`.
+- Title (status item): with ONE active provider — single-provider format, no
+  prefix, e.g. `5h●45% │ 7d●30% │ 7d●52% Fable`. With >1 active: provider groups
+  joined by ` ‖ `, each group prefixed `Cl·` / `Cx·` / `Cu·`, e.g.
+  `Cl·5h●45% │ 7d●30% ‖ Cx·5h●12% │ 7d●40%`. A provider in stale/expired state
+  contributes `⚠` before its group prefix (single provider: before first
+  segment, as in v0.1).
+- Menu with >1 active provider: disabled bold header rows `Claude` / `Codex`
+  above each provider's limit rows; single provider — no header. Per-provider
+  error lines: `Токен Codex истёк — запусти codex` / existing claude line.
+- Notification texts get provider-aware wording: claude strings stay EXACTLY as
+  in v0.1; codex: reset title `Лимиты Codex обновились`, bodies
+  `Codex: 5-часовое окно сброшено — можно работать.` / `Codex: недельный лимит
+  сброшен.` / generic `Codex: лимит <label> сброшен.`; exhausted titles
+  `Codex: 5-часовой лимит исчерпан` / `Codex: недельный лимит исчерпан` /
+  `Codex: лимит <label> исчерпан`, same body forms as claude.
+
+## Codex provider (data source)
+
+No live fixture was capturable on this machine (no `auth.json` here) — schema is
+community-documented (CodexBar, ccusage, codex-cli-usage) and field names vary
+across versions, so the parser MUST be alias-tolerant and `--check` MUST provide
+diagnosis output good enough to debug remotely.
+
+- **Creds**: `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`):
+  `{auth_mode?, last_refresh?, tokens: {access_token, refresh_token?, id_token?,
+  account_id?}, OPENAI_API_KEY?}`. NEVER write the file, NEVER refresh tokens
+  (rotation invalidates codex's own refresh token), never log/print tokens.
+  `account_id` fallback: base64url-decode the JWT payload of `id_token` (then
+  `access_token`) and read claim `chatgpt_account_id` (also check
+  `https://api.openai.com/auth` nested claims); tolerate absence — then send no
+  account header.
+- **Request**: `GET https://chatgpt.com/backend-api/wham/usage`; on HTTP 404 (or
+  400) retry once with `/backend-api/codex/usage`. Headers:
+  `Authorization: Bearer <access_token>`, `ChatGPT-Account-Id: <account_id>` (if
+  known), `Accept: application/json`, `Origin: https://chatgpt.com`,
+  `Referer: https://chatgpt.com/`, browser-like Safari `User-Agent` (WAF trips on
+  bot-looking UAs). Timeout 15 s.
+- **Parse (alias-tolerant at every level)**: windows may sit under `rate_limit`
+  / `rate_limits` or top-level. `primary_window`/`primary` → session-like;
+  `secondary_window`/`secondary` → weekly-like; `additional_rate_limits[]`
+  (each with `name`/`label`/`display_name` + window fields) → scoped entries.
+  Field aliases:
+  - percent used: `used_percent` | `percent_used` | `100 - percent_left` |
+    `100 - percent_remaining` (round to Int)
+  - reset time: `resets_at` (ISO8601 or epoch seconds) | `reset_at` |
+    `reset_time_ms` (ms epoch) | now + `resets_in_seconds` |
+    now + `reset_after_seconds`
+  - window size: `window_minutes` | `limit_window_seconds / 60`
+  Kind mapping: primary → `session` when window ≈ ≤6 h (or missing), secondary →
+  `weekly_all` when window ≈ 7 d (or missing); otherwise generic kind
+  `window_<minutes>m`. Window label: `h = round(wm/60)`, `h < 48` → `"\(h)h"`,
+  else `"\(round(wm/1440))d"`; defaults `5h` / `7d` when wm missing. RU menu
+  labels: ≈300 min → `5-часовой`, ≈10080 min → `Недельный`, else `Окно N ч` /
+  `Окно N дн`; scoped appends ` · <name>`.
+- **Errors**: HTTP 401 → codex token-expired state (menu:
+  `Токен Codex истёк — запусти codex`; codex refreshes it on next use). Parse
+  failure → provider error state; `--check` prints the response's JSON key tree
+  (keys and array counts ONLY, depth ≤ 3, NO values — values could embed ids) to
+  make remote debugging possible.
+- **Fixtures**: `fixtures/codex_usage_sample.json` (canonical:
+  `rate_limit.primary_window.used_percent/resets_in_seconds/window_minutes` etc.
+  + one `additional_rate_limits` entry) and `fixtures/codex_usage_alias.json`
+  (variant: top-level `primary`/`secondary`, `percent_left`, `reset_time_ms`,
+  `limit_window_seconds`). Both must normalize to the same shape. The fixtures
+  are authored to normalize IDENTICALLY (including reset instants) for a fixed
+  `now = 2026-07-16T12:00:00Z` (epoch 1784203200): percents 12/40/55, window
+  labels `5h`/`7d`/`7d`, scoped name `Spark`; the alias `reset_time_ms` values
+  equal `(1784203200 + resets_in_seconds) * 1000` of the canonical fixture.
+  `checks` must use exactly this `now`.
+
+## `--check` (v0.2, supersedes)
+
+- Section per ACTIVE provider: creds source, token validity (claude: expiresAt;
+  codex: last_refresh age if present), fetch, parsed table, per-provider title
+  group, planned notifications. Providers without creds → single line
+  `codex: неактивен (нет ~/.codex/auth.json)`.
+- Exit 0 iff EVERY active provider fetched and parsed successfully (an inactive
+  provider is not a failure). This is the contract agents/friends verify.
+
+## `checks` additions (fixture-driven)
+
+10. Codex canonical fixture → 3 entries (session/weekly_all/scoped) with correct
+    percents, reset dates, window labels `5h`/`7d`, scoped name; alias fixture →
+    identical normalized output (modulo reset dates derived from a fixed `now`).
+11. Provider-prefixed identifiers (`reset|codex|session||<stamp>`); legacy
+    4-part `exhaustedNotified` keys survive pruning without crash and get
+    dropped/pruned per the rules above.
+12. Multi-provider title: claude fixture (3) + codex fixture (3) →
+    `Cl·…` ‖ `Cx·…` grouping; single provider → no prefix (regression on the
+    existing plain-title checks).
+13. JWT payload decode: synthetic unsigned JWT with `chatgpt_account_id` claim →
+    extracted; garbage token → nil, no crash.
+14. Codex RU labels & notification texts (`Лимиты Codex обновились`,
+    `Codex: 5-часовой лимит исчерпан`, window-label fallback `Окно 3 ч`).
+
+---
+
+# v0.3 — Cursor provider (2026-07-16)
+
+Third provider `cursor` on top of the v0.2 multi-provider architecture. Prefix
+`Cu·`; display order: claude, codex, cursor. Verified LIVE on this machine
+2026-07-16: real response captured in `fixtures/cursor_usage_summary_sample.json`
+(PII scrubbed), synthetic edge-case in `fixtures/cursor_usage_summary_ondemand.json`.
+The fixtures are the parsing source of truth.
+
+## Creds (SQLite, strictly read-only)
+
+- Access token lives in
+  `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` — a
+  SQLite DB that is huge (5.6 GB here) and actively written by Cursor. NEVER
+  copy it, never open read-write. Read via `Process` (same pattern as
+  `/usr/bin/security`):
+  `/usr/bin/sqlite3 -readonly "<db>" "SELECT value FROM ItemTable WHERE key='cursorAuth/accessToken';"`
+  — the indexed point lookup is fast even at that size; timeout 5 s. The value
+  may be a raw JWT or a JSON-quoted string — strip surrounding double quotes.
+- Provider ACTIVE iff the DB exists and the query returns a non-empty token.
+  Otherwise INACTIVE: menu/`--check` line `cursor: неактивен (нет Cursor)`.
+- **Cookie recipe (verified live)**: base64url-decode the JWT payload, read
+  claim `sub` (e.g. `google-oauth2|1234567890`). Cookie:
+  `WorkosCursorSessionToken=<sub>::<accessToken>` — raw `::` join, no percent
+  encoding. No email/account id needed. Re-read the token from the DB on every
+  poll (Cursor rotates it). NEVER log/print the token, `sub`, or the assembled
+  cookie; `--check` may report shape only (e.g. `JWT, 3 сегмента, sub найден`).
+
+## Request
+
+- `GET https://cursor.com/api/usage-summary`, timeout 15 s. Headers:
+  `Cookie: WorkosCursorSessionToken=<sub>::<token>`, `Accept: application/json`,
+  `Origin: https://cursor.com`, `Referer: https://cursor.com/dashboard`, and the
+  same browser-like Safari `User-Agent` as the codex provider (WAF).
+- Poll every 300 s (billing-cycle data moves slowly; be gentle with the web
+  endpoint). First fetch at launch and on wake, per v0.2. Per-provider
+  stale/error isolation per v0.2.
+- HTTP 401/403 → cursor token-expired state: menu line
+  `Токен Cursor истёк — открой Cursor`, keep last data, per-provider ⚠.
+
+## Parse → buckets (no windows — everything resets at `billingCycleEnd`)
+
+Response shape (see fixtures): `billingCycleStart`/`billingCycleEnd` (ISO 8601
+with milliseconds + `Z` — the v0.1 date parser's `.SSSXXXXX` fallback covers
+it), `membershipType`, `isUnlimited`, display strings
+`autoModelSelectedDisplayMessage`/`namedModelSelectedDisplayMessage`,
+`individualUsage.plan {used, limit, remaining, autoPercentUsed, apiPercentUsed,
+totalPercentUsed}`, `individualUsage.onDemand {enabled, used, limit, remaining}`.
+
+Cursor has NO session/weekly windows. Every bucket's `resets_at` =
+`billingCycleEnd`. Buckets, in this order:
+
+1. **Auto+Composer** — kind `cursor_auto`, window label `Auto`, RU label
+   `Auto+Composer`. Percent = `round(plan.totalPercentUsed)` — this matches the
+   integer Cursor itself shows in Auto mode (1.527… → 2 %, cf.
+   `autoModelSelectedDisplayMessage`). KNOWN TRAP: do NOT use
+   `plan.autoPercentUsed` — different denominator, does not match the UI.
+2. **API** — kind `cursor_api`, window label `API`, RU label `API-модели`.
+   Percent = `round(plan.apiPercentUsed)` (6.466… → 6 %, cf.
+   `namedModelSelectedDisplayMessage`).
+3. **On-demand** — kind `cursor_on_demand`, window label `OnD`, RU label
+   `On-demand`. Present ONLY when `onDemand.enabled == true`. Percent =
+   `round(100 * used / limit)`; `limit` null or 0 → unlimited on-demand:
+   segment `OnD●∞`, level green, excluded from notification planning.
+
+- **Fallback**: if a bucket's numeric percent field is missing/unparseable,
+  extract the first integer before `%` from the corresponding display message
+  (`"You've used 2% of your included total usage"` → 2). Both sources missing →
+  skip the bucket defensively (never crash).
+- `isUnlimited == true` (top-level) → provider contributes a single segment `∞`
+  (green), menu row `Cursor: безлимит`, no notifications planned.
+- Title group: `Cu·Auto●2% │ API●6%` (+ ` │ OnD●75%` when on-demand active) —
+  the v0.1 segment format with the bucket name as window label, no scope suffix.
+  Cursor-only active → no `Cu·` prefix (v0.2 single-provider rule).
+- Menu rows use the standard v0.1 forms, e.g.
+  `● Auto+Composer: 2% · сброс 7 авг 08:27`; exhausted form per v0.1.
+- `LimitEntry.provider = "cursor"`. Identifiers per v0.2 format:
+  `reset|cursor|cursor_auto||<stamp>` etc. (minute-rounded stamp as usual).
+
+## Notifications (cursor wording)
+
+- Reset: title `Лимиты Cursor обновились`; bodies
+  `Cursor: лимит Auto+Composer сброшен.` / `Cursor: лимит API сброшен.` /
+  `Cursor: лимит on-demand сброшен.` (generic: `Cursor: лимит <label> сброшен.`).
+- Exhausted: titles `Cursor: лимит Auto+Composer исчерпан` /
+  `Cursor: лимит API исчерпан` / `Cursor: лимит on-demand исчерпан`; body forms
+  as v0.1.
+
+## `--check` (v0.3 addition)
+
+- Cursor section per the v0.2 per-provider format: creds source (DB path found,
+  token shape only — never values), fetch, parsed bucket table, title group,
+  planned notifications. Inactive → `cursor: неактивен (нет Cursor)`. Cursor is
+  live-verifiable on this machine — exit-0 contract includes it when active.
+
+## `checks` additions (fixture-driven)
+
+15. Sample fixture → exactly 2 entries: `cursor_auto` 2 % and `cursor_api` 6 %
+    (rounding from 1.527…/6.466…), both resetting at parsed
+    `2026-08-07T05:27:30Z`, window labels `Auto`/`API`;
+    `onDemand.enabled == false` → no on-demand entry.
+16. On-demand fixture → 3 entries: 92 % (red) / 96 % (red) / 75 % (orange);
+    on-demand percent computed as `100 * 1500 / 2000`.
+17. Display-message fallback: sample fixture with the numeric percent fields
+    stripped → Auto 2 / API 6 recovered from the display strings.
+18. JWT `sub` extraction: synthetic unsigned JWT with sub `google-oauth2|123` +
+    token `T` → cookie value `google-oauth2|123::T`; garbage / 2-segment token →
+    nil, no crash; JSON-quoted DB value is unquoted before decoding.
+19. Cursor RU labels + notification texts; `isUnlimited` variant → single `∞`
+    segment, green, zero planned notifications.
+20. Three-provider title: `Cl·… ‖ Cx·… ‖ Cu·…` in that order; cursor-only →
+    no prefix (`Auto●2% │ API●6%`).

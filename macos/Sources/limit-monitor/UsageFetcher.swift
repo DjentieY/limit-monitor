@@ -1,5 +1,5 @@
 import Foundation
-import ClaudeLimitsCore
+import LimitMonitorCore
 
 enum FetchError: Error {
     case tokenExpired

@@ -1,6 +1,6 @@
 import Foundation
 import UserNotifications
-import ClaudeLimitsCore
+import LimitMonitorCore
 
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private let bundled = Bundle.main.bundlePath.hasSuffix(".app")
@@ -10,7 +10,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         if bundled { return true }
         if !warnedUnbundled {
             FileHandle.standardError.write(Data(
-                "claude-limits: not inside a .app bundle — notifications disabled (dev mode)\n".utf8
+                "limit-monitor: not inside a .app bundle — notifications disabled (dev mode)\n".utf8
             ))
             warnedUnbundled = true
         }
@@ -24,14 +24,20 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    func reconcileScheduled(_ desired: [PlannedReset]) {
+    /// removalScope: providers whose desired set is known this session — only
+    /// their stale requests may be removed. A provider that has not yet polled
+    /// successfully keeps its previous-session schedule (it must fire on time
+    /// even if that provider stays offline through the reset moment).
+    func reconcileScheduled(_ desired: [PlannedReset], removalScope: Set<String>) {
         guard ensureBundled() else { return }
         let desiredById = Dictionary(desired.map { ($0.identifier, $0) }, uniquingKeysWith: { a, _ in a })
         let center = UNUserNotificationCenter.current()
         center.getPendingNotificationRequests { pending in
             let existing = Set(pending.map(\.identifier).filter { $0.hasPrefix("reset|") })
             let wanted = Set(desiredById.keys)
-            let stale = existing.subtracting(wanted)
+            let stale = existing.subtracting(wanted).filter {
+                removalScope.contains(NotificationPlanner.identifierProvider($0))
+            }
             if !stale.isEmpty {
                 center.removePendingNotificationRequests(withIdentifiers: Array(stale))
             }

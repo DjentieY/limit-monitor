@@ -28,6 +28,7 @@ public enum UsageParser {
             if scopeName == nil { scopeName = scope["display_name"] as? String }
         }
         return LimitEntry(
+            provider: Provider.claude,
             kind: kind,
             group: dict["group"] as? String,
             percent: percent,
@@ -51,6 +52,7 @@ public enum UsageParser {
               let percent = intValue(dict["utilization"]) else { return nil }
         let raw = dict["resets_at"] as? String
         return LimitEntry(
+            provider: Provider.claude,
             kind: kind,
             group: group,
             percent: percent,

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build "Claude Limits.app" (menu bar app) from the SwiftPM release binary.
+# Build "Limit Monitor.app" (menu bar app) from the SwiftPM release binary.
 # Usage: ./scripts/make_app.sh [--install]
 set -euo pipefail
 
@@ -7,12 +7,12 @@ cd "$(dirname "$0")/.."
 
 swift build -c release
 
-APP="build/Claude Limits.app"
-BIN=".build/release/claude-limits"
+APP="build/Limit Monitor.app"
+BIN=".build/release/limit-monitor"
 
-rm -rf "$APP"
+rm -rf "$APP" "build/Claude Limits.app"
 mkdir -p "$APP/Contents/MacOS"
-cp "$BIN" "$APP/Contents/MacOS/claude-limits"
+cp "$BIN" "$APP/Contents/MacOS/limit-monitor"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -20,11 +20,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.vladlaiho.claude-limits</string>
+	<string>com.vladlaiho.limit-monitor</string>
 	<key>CFBundleName</key>
-	<string>Claude Limits</string>
+	<string>Limit Monitor</string>
 	<key>CFBundleExecutable</key>
-	<string>claude-limits</string>
+	<string>limit-monitor</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -45,9 +45,20 @@ codesign --force -s - "$APP"
 echo "Built: $APP"
 
 if [[ "${1:-}" == "--install" ]]; then
+    # v0.1 shipped as "Claude Limits.app"/claude-limits — remove and kill both
+    # generations so an upgrade never leaves two menu bar items behind.
+    HAD_V01=0
+    if [[ -d "$HOME/Applications/Claude Limits.app" ]]; then HAD_V01=1; fi
     pkill -x claude-limits 2>/dev/null || true
+    pkill -x limit-monitor 2>/dev/null || true
     mkdir -p "$HOME/Applications"
-    rm -rf "$HOME/Applications/Claude Limits.app"
-    ditto "$APP" "$HOME/Applications/Claude Limits.app"
-    echo "Installed: $HOME/Applications/Claude Limits.app (not relaunched)"
+    rm -rf "$HOME/Applications/Claude Limits.app" "$HOME/Applications/Limit Monitor.app"
+    ditto "$APP" "$HOME/Applications/Limit Monitor.app"
+    echo "Installed: $HOME/Applications/Limit Monitor.app (not relaunched)"
+    if [[ "$HAD_V01" == 1 ]]; then
+        # SMAppService registrations are per-bundle-id and cannot be migrated.
+        echo "Upgrade note: the old Claude Limits.app login item does not carry over —"
+        echo "re-enable autostart in the new app menu («Запускать при входе») and remove"
+        echo "the stale 'Claude Limits' entry in System Settings → Login Items."
+    fi
 fi

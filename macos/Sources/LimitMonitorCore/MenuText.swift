@@ -3,6 +3,7 @@ import Foundation
 public enum MenuText {
     public static func infoRow(for limit: LimitEntry, now: Date = Date()) -> String {
         let label = Labels.menuLabel(for: limit)
+        if limit.unlimited { return "\(label): безлимит" }
         if limit.isExhausted {
             guard let date = limit.resetsAt else { return "\(label): исчерпан" }
             return "\(label): исчерпан · возобновится \(when(date, now: now))"

@@ -2,3 +2,4 @@
 .build/
 macos/build/
 *.xcodeproj
+SESSION_STATE.md
