@@ -1,5 +1,8 @@
 .DS_Store
 .build/
 macos/build/
+macos/dist/
+RELEASE_NOTES.md
 *.xcodeproj
 SESSION_STATE.md
+roaster-verdicts/

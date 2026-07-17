@@ -1,5 +1,9 @@
 # limit-monitor
 
+[![CI](https://github.com/DjentieY/limit-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/DjentieY/limit-monitor/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/DjentieY/limit-monitor?sort=semver)](https://github.com/DjentieY/limit-monitor/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Menu-bar monitor for your AI subscription rate limits. See at a glance how much
 of your Claude, Codex and Cursor rate limits is left — 5-hour session, weekly,
 promotional, billing-cycle — and get a native notification the moment a window
@@ -193,6 +197,22 @@ registrations are tied to the bundle id and cannot be migrated. Building
 locally means the app is never quarantined — no Gatekeeper friction, no
 $99/yr certificate. Click **Allow** on the notification permission prompt,
 and enable autostart via the app menu.
+
+### Prebuilt release (alternative)
+
+Each tagged release ships a prebuilt Apple-Silicon `Limit Monitor.app` on the
+[Releases page](https://github.com/DjentieY/limit-monitor/releases/latest)
+(with a `.sha256` checksum). Because the build is ad-hoc signed rather than
+notarized, macOS quarantines anything downloaded from the web, so clear the
+flag after unzipping:
+
+```sh
+xattr -dr com.apple.quarantine "Limit Monitor.app"
+mv "Limit Monitor.app" ~/Applications/
+```
+
+The source install above avoids this step entirely, works on Intel Macs too,
+and is the recommended path.
 
 ## Install with your AI coding agent
 

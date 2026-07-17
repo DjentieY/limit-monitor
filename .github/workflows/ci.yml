@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-check:
+    name: Build & checks (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          swift --version
+          swift --version | grep -qE 'version (5\.1[0-9]|[6-9]\.)' \
+            || { echo "::error::Swift < 5.10 (package requires swift-tools 5.10)"; exit 1; }
+
+      - name: Build (release)
+        working-directory: macos
+        run: swift build -c release
+
+      - name: Assertion checks
+        working-directory: macos
+        run: swift run -c release checks
+
+      - name: Assemble .app (ad-hoc)
+        working-directory: macos
+        run: ./scripts/make_app.sh
+
+      - name: Verify bundle signature
+        working-directory: macos
+        run: codesign --verify --deep --strict --verbose=2 "build/Limit Monitor.app"
