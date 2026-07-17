@@ -28,7 +28,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// their stale requests may be removed. A provider that has not yet polled
     /// successfully keeps its previous-session schedule (it must fire on time
     /// even if that provider stays offline through the reset moment).
-    func reconcileScheduled(_ desired: [PlannedReset], removalScope: Set<String>) {
+    /// knownProviders: the COMPLETE set of configured runtime ids — pending
+    /// requests of a provider removed/renamed/disabled in providers.json belong
+    /// to no runtime, so they are purged outright (otherwise a deleted entry's
+    /// reset notification could fire weeks later).
+    func reconcileScheduled(_ desired: [PlannedReset], removalScope: Set<String>, knownProviders: Set<String>) {
         guard ensureBundled() else { return }
         let desiredById = Dictionary(desired.map { ($0.identifier, $0) }, uniquingKeysWith: { a, _ in a })
         let center = UNUserNotificationCenter.current()
@@ -36,7 +40,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             let existing = Set(pending.map(\.identifier).filter { $0.hasPrefix("reset|") })
             let wanted = Set(desiredById.keys)
             let stale = existing.subtracting(wanted).filter {
-                removalScope.contains(NotificationPlanner.identifierProvider($0))
+                let provider = NotificationPlanner.identifierProvider($0)
+                return removalScope.contains(provider) || !knownProviders.contains(provider)
             }
             if !stale.isEmpty {
                 center.removePendingNotificationRequests(withIdentifiers: Array(stale))

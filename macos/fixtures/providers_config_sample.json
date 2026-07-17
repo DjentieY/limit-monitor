@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "defaults": { "pollSeconds": 300 },
+  "providers": [
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "label": "OR",
+      "kind": "openrouter",
+      "key": { "literal": "sk-or-v1-TEST-NOT-A-REAL-KEY" }
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "label": "DS",
+      "kind": "deepseek",
+      "key": { "env": "DEEPSEEK_API_KEY" },
+      "thresholds": { "warn": 3, "critical": 0.5 }
+    },
+    {
+      "id": "glm",
+      "name": "GLM",
+      "label": "GLM",
+      "kind": "zhipu",
+      "host": "intl",
+      "key": { "command": "echo test-key" },
+      "pollSeconds": 600
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi",
+      "label": "Ki",
+      "kind": "moonshot",
+      "host": "cn",
+      "key": { "env": "MOONSHOT_API_KEY" },
+      "enabled": false
+    },
+    {
+      "id": "sf",
+      "name": "SiliconFlow",
+      "label": "SF",
+      "kind": "siliconflow",
+      "key": { "env": "SILICONFLOW_API_KEY" }
+    },
+    {
+      "id": "hyper",
+      "name": "Hyperbolic",
+      "label": "Hy",
+      "kind": "generic-http",
+      "key": { "env": "HYPERBOLIC_API_KEY" },
+      "request": {
+        "url": "https://api.hyperbolic.xyz/billing/get_current_balance",
+        "headers": { "Authorization": "Bearer ${KEY}" }
+      },
+      "extract": { "balance": { "path": "credits", "scale": 0.01 } },
+      "display": { "mode": "balance", "currency": "USD" },
+      "thresholds": { "warn": 5, "critical": 1 }
+    }
+  ]
+}

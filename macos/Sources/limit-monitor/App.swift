@@ -26,12 +26,17 @@ enum PollOutcome {
     case inactive(menuRow: String?)
     case success([LimitEntry])
     case failure(ProviderHealth)
+    /// Config providers (v0.4): a typed state (key/config/bad-key/no-plan/
+    /// blocked/info/fetch/parse) instead of the builtin ProviderHealth.
+    case customState(ProviderState)
 }
 
 // Per-provider state: polling cadence, last data and health are fully isolated,
 // so one provider failing or going stale never marks the other stale.
 final class ProviderRuntime {
     let id: String
+    let displayName: String
+    let barPrefix: String
     let pollInterval: TimeInterval
     let fetch: () -> PollOutcome
 
@@ -40,21 +45,47 @@ final class ProviderRuntime {
     var limits: [LimitEntry] = []
     var lastSuccess: Date?
     var health: ProviderHealth = .ok
+    /// Last error/info state of a config provider — drives its RU error line.
+    var customState: ProviderState?
     var polling = false
 
-    init(id: String, pollInterval: TimeInterval, fetch: @escaping () -> PollOutcome) {
+    init(
+        id: String,
+        displayName: String? = nil,
+        barPrefix: String? = nil,
+        pollInterval: TimeInterval,
+        fetch: @escaping () -> PollOutcome
+    ) {
         self.id = id
+        self.displayName = displayName ?? Provider.displayName(id)
+        self.barPrefix = barPrefix ?? Provider.titlePrefix(id)
         self.pollInterval = pollInterval
         self.fetch = fetch
     }
 
+    convenience init(custom provider: ConfiguredProvider) {
+        let poller = CustomProviderPoller(provider: provider)
+        self.init(
+            id: provider.id,
+            displayName: provider.name,
+            barPrefix: provider.titlePrefix,
+            pollInterval: TimeInterval(provider.pollSeconds),
+            fetch: poller.poll
+        )
+    }
+
+    /// Stale threshold scales with the provider's own cadence: the v0.1
+    /// 10-minute rule for the fast builtins (claude/codex/cursor stay at 600 s),
+    /// 2 poll intervals for slower config providers — pollSeconds has no upper
+    /// clamp, so a healthy 600+ s entry must not flash ⚠ on the tail of every
+    /// cycle just because refreshUI redraws between its polls.
     var isStale: Bool {
         guard active else { return false }
         switch health {
         case .tokenExpired, .badCredentials: return true
         case .ok, .network, .parseError:
             guard let lastSuccess else { return health != .ok }
-            return Date().timeIntervalSince(lastSuccess) > 600
+            return Date().timeIntervalSince(lastSuccess) > max(600, pollInterval * 2)
         }
     }
 }
@@ -124,13 +155,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         label: "com.vladlaiho.limit-monitor.poll", attributes: .concurrent
     )
 
-    // Display order: claude limits first, then codex, then cursor. Cursor is
-    // polled gently (300 s) — billing-cycle data moves slowly.
-    private let providers: [ProviderRuntime] = [
-        ProviderRuntime(id: Provider.claude, pollInterval: 60, fetch: ClaudePoller.poll),
-        ProviderRuntime(id: Provider.codex, pollInterval: 180, fetch: CodexPoller.poll),
-        ProviderRuntime(id: Provider.cursor, pollInterval: 300, fetch: CursorPoller.poll),
-    ]
+    // Display order: claude limits first, then codex, then cursor, then config
+    // providers in providers.json file order. Cursor and config providers are
+    // polled gently (300 s default) — balances/billing data move slowly.
+    private let providers: [ProviderRuntime]
+    /// Static disabled menu rows from providers.json: file parse/version error,
+    /// chmod warning, per-entry config errors. Built once at launch.
+    private let configRows: [String]
+
+    override init() {
+        var runtimes = [
+            ProviderRuntime(id: Provider.claude, pollInterval: 60, fetch: ClaudePoller.poll),
+            ProviderRuntime(id: Provider.codex, pollInterval: 180, fetch: CodexPoller.poll),
+            ProviderRuntime(id: Provider.cursor, pollInterval: 300, fetch: CursorPoller.poll),
+        ]
+        var rows: [String] = []
+        switch ProvidersConfigLoader.load() {
+        case .missing:
+            break
+        case .malformed:
+            rows.append(ProvidersConfigFile.malformedMenuRow)
+        case .unsupportedVersion:
+            rows.append(ProvidersConfigFile.unsupportedVersionMenuRow)
+        case .loaded(let config, _, let permissive):
+            if permissive { rows.append(ProvidersConfigFile.permissiveMenuRow) }
+            runtimes.append(contentsOf: config.providers.map { ProviderRuntime(custom: $0) })
+            rows.append(contentsOf: config.errors.map(\.menuRow))
+        }
+        providers = runtimes
+        configRows = rows
+        super.init()
+    }
 
     private let titleFont = NSFont.menuBarFont(ofSize: 0)
     private let menuFont = NSFont.menuFont(ofSize: 0)
@@ -189,16 +244,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             provider.limits = []
             provider.lastSuccess = nil
             provider.health = .ok
+            provider.customState = nil
         case .success(let limits):
             provider.active = true
             provider.inactiveMenuRow = nil
             provider.limits = limits
             provider.lastSuccess = Date()
             provider.health = .ok
+            provider.customState = nil
         case .failure(let health):
             provider.active = true
             provider.inactiveMenuRow = nil
             provider.health = health
+        case .customState(let state):
+            if case .info = state {
+                // Not a failure (openrouter credits denied to this key): the
+                // provider has nothing to show — a disabled menu row, no bar group.
+                provider.active = false
+                provider.inactiveMenuRow = MenuText.stateRow(name: provider.displayName, state: state)
+                provider.limits = []
+                provider.lastSuccess = nil
+                provider.health = .ok
+                provider.customState = nil
+            } else {
+                // Error states keep the last data and the v0.2 ⚠ semantics.
+                provider.active = true
+                provider.inactiveMenuRow = nil
+                provider.customState = state
+                provider.health = Self.health(for: state)
+            }
         }
         provider.polling = false
         // Replan only from data-bearing (successful) polls: a failed/inactive
@@ -213,8 +287,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A provider with no successful poll this session has an UNKNOWN desired
         // set: its pending requests and null-stamp exhausted keys are left alone
         // until it reports, so one provider's launch success cannot wipe another's.
+        // Identifiers of providers absent from allIds (removed from providers.json)
+        // have no runtime at all and are purged by the reconciler.
+        let allIds = Set(providers.map(\.id))
         let reported = Set(providers.filter { $0.lastSuccess != nil }.map(\.id))
-        let unreported = Set(providers.map(\.id)).subtracting(reported)
+        let unreported = allIds.subtracting(reported)
         let defaults = UserDefaults.standard
         let enabled = defaults.bool(forKey: "notifyOnReset")
         let already = (defaults.dictionary(forKey: "exhaustedNotified") as? [String: Bool]) ?? [:]
@@ -226,7 +303,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notified[key] = value
         }
         if enabled {
-            notifier.reconcileScheduled(plan.scheduled, removalScope: reported)
+            notifier.reconcileScheduled(plan.scheduled, removalScope: reported, knownProviders: allIds)
             for item in plan.immediate {
                 notifier.deliverImmediate(item)
                 notified[item.identifier] = true
@@ -235,6 +312,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notifier.removeAllScheduledResets()
         }
         defaults.set(notified, forKey: "exhaustedNotified")
+    }
+
+    /// Staleness semantics of a config-provider state: transient fetch/parse
+    /// failures behave like the builtin network/parse cases (⚠ only after the
+    /// 10-min grace), persistent conditions (bad key, no plan, geo-block,
+    /// config/key errors) show ⚠ immediately, like an expired token.
+    private static func health(for state: ProviderState) -> ProviderHealth {
+        switch state {
+        case .ok, .info: return .ok
+        case .fetchError: return .network
+        case .parseError: return .parseError
+        case .configError, .keyError, .badKey, .noPlan, .blocked: return .badCredentials
+        }
     }
 
     private func refreshUI() {
@@ -285,7 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for (index, provider) in active.enumerated() {
                 if index > 0 { append(TitleFormatter.providerSeparator) }
                 if provider.isStale { append("⚠") }
-                append(Provider.titlePrefix(provider.id))
+                append(provider.barPrefix)
                 if provider.limits.isEmpty { append("…") } else { appendSegments(provider.limits) }
             }
         }
@@ -293,6 +383,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func errorLine(for provider: ProviderRuntime, multi: Bool) -> String {
+        if let state = provider.customState {
+            return MenuText.stateRow(name: provider.displayName, state: state)
+        }
         switch provider.health {
         case .ok:
             return ""
@@ -348,7 +441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 continue
             }
             if multi {
-                let name = Provider.displayName(provider.id)
+                let name = provider.displayName
                 let header = disabledItem(name)
                 header.attributedTitle = NSAttributedString(
                     string: name,
@@ -380,6 +473,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     addedRows = true
                 }
             }
+        }
+        for row in configRows {
+            menu.addItem(disabledItem(row))
+            addedRows = true
         }
         if addedRows { menu.addItem(.separator()) }
 

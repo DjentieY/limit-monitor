@@ -2,6 +2,7 @@ import Foundation
 
 public enum Labels {
     public static func windowLabel(for limit: LimitEntry) -> String {
+        if let explicit = limit.windowLabel { return explicit }
         if let minutes = limit.windowMinutes {
             let hours = Int((Double(minutes) / 60).rounded())
             if hours < 48 { return "\(hours)h" }
@@ -29,9 +30,16 @@ public enum Labels {
         return ([capitalized] + words.dropFirst()).joined(separator: " ")
     }
 
+    /// Menu/notification display name of the limit's provider (config providers
+    /// carry it from providers.json).
+    public static func providerDisplayName(for limit: LimitEntry) -> String {
+        limit.providerName ?? Provider.displayName(limit.provider)
+    }
+
     public static func menuLabel(for limit: LimitEntry) -> String {
         if limit.provider == Provider.codex { return codexMenuLabel(for: limit) }
         if limit.provider == Provider.cursor { return cursorMenuLabel(for: limit) }
+        if !Provider.isBuiltin(limit.provider) { return configMenuLabel(for: limit) }
         switch limit.kind {
         case "session": return "5-часовой"
         case "weekly_all": return "Недельный (все модели)"
@@ -44,8 +52,8 @@ public enum Labels {
         }
     }
 
-    public static func resetTitle(forProvider provider: String) -> String {
-        "Лимиты \(Provider.displayName(provider)) обновились"
+    public static func resetTitle(for limit: LimitEntry) -> String {
+        "Лимиты \(providerDisplayName(for: limit)) обновились"
     }
 
     public static func exhaustedTitle(for limit: LimitEntry) -> String {
@@ -53,6 +61,7 @@ public enum Labels {
         if limit.provider == Provider.cursor {
             return "Cursor: лимит \(cursorNotificationName(for: limit)) исчерпан"
         }
+        if !Provider.isBuiltin(limit.provider) { return configExhaustedTitle(for: limit) }
         switch limit.kind {
         case "session": return "Claude: 5-часовой лимит исчерпан"
         case "weekly_all": return "Claude: недельный лимит исчерпан"
@@ -71,6 +80,7 @@ public enum Labels {
         if limit.provider == Provider.cursor {
             return "Cursor: лимит \(cursorNotificationName(for: limit)) сброшен."
         }
+        if !Provider.isBuiltin(limit.provider) { return configResetBody(for: limit) }
         switch limit.kind {
         case "session": return "5-часовое окно сброшено — можно работать."
         case "weekly_all": return "Недельный лимит сброшен."
@@ -162,5 +172,32 @@ public enum Labels {
         case "cursor_on_demand": return "on-demand"
         default: return menuLabel(for: limit)
         }
+    }
+
+    // MARK: - Config providers (v0.4, providers.json)
+
+    private static func configMenuLabel(for limit: LimitEntry) -> String {
+        if limit.kind == "time_limit" { return "Поиск/MCP" }
+        if limit.balanceText != nil { return providerDisplayName(for: limit) }
+        // Windowed percent entries (zhipu) reuse the codex window forms.
+        if limit.windowMinutes != nil { return codexBaseLabel(for: limit) }
+        return providerDisplayName(for: limit)
+    }
+
+    // SPEC v0.4 pattern `<Name>: лимит <label> исчерпан`; single-entry providers
+    // whose label IS the name collapse to `<Name>: лимит исчерпан`.
+    private static func configExhaustedTitle(for limit: LimitEntry) -> String {
+        let name = providerDisplayName(for: limit)
+        if limit.balanceText != nil { return "\(name): баланс исчерпан" }
+        let label = configMenuLabel(for: limit)
+        if label == name { return "\(name): лимит исчерпан" }
+        return "\(name): лимит \(label) исчерпан"
+    }
+
+    private static func configResetBody(for limit: LimitEntry) -> String {
+        let name = providerDisplayName(for: limit)
+        let label = configMenuLabel(for: limit)
+        if label == name { return "\(name): лимит сброшен." }
+        return "\(name): лимит \(label) сброшен."
     }
 }

@@ -51,12 +51,111 @@ enum CheckMode {
         }
 
         print("")
+        print("== custom ==")
+        if runCustomProviders(now: now, groups: &groups) { failed = true }
+
+        print("")
         if !groups.isEmpty {
             print("merged title: \(TitleFormatter.plainTitle(groups: groups))")
             print("")
         }
         print(failed ? "FAILED" : "OK")
         return failed ? 1 : 0
+    }
+
+    // MARK: - Custom providers (providers.json, v0.4)
+
+    // Exit contract: config-error, key-resolution failure, bad-key, no-plan,
+    // blocked and fetch/parse failures of an ENABLED provider fail the run;
+    // a missing config file, enabled:false entries and the openrouter
+    // credits-denied info state do not. Key VALUES are never printed — only
+    // the source (env NAME / command / literal).
+    private static func runCustomProviders(now: Date, groups: inout [ProviderGroup]) -> Bool {
+        switch ProvidersConfigLoader.load() {
+        case .missing(let path):
+            print(ProvidersConfigLoader.isDefaultPath(path)
+                ? ProvidersConfigFile.missingCheckLine
+                : "custom: нет \(path)")
+            return false
+        case .malformed(let path):
+            print("config: \(path)")
+            print("ERROR: \(ProvidersConfigFile.malformedMenuRow)")
+            return true
+        case .unsupportedVersion(let path):
+            print("config: \(path)")
+            print("ERROR: \(ProvidersConfigFile.unsupportedVersionMenuRow)")
+            return true
+        case .loaded(let config, let path, let permissive):
+            // SPEC v0.4: zero enabled entries → the same single line as a
+            // missing file. Applies to the clean canonical case only — an env
+            // override or a chmod warning keeps the diagnostic form.
+            if config.providers.isEmpty, config.errors.isEmpty, !permissive,
+               ProvidersConfigLoader.isDefaultPath(path) {
+                print(ProvidersConfigFile.missingCheckLine)
+                return false
+            }
+            print("config: \(path)")
+            if permissive {
+                print("WARNING: \(ProvidersConfigFile.permissiveMenuRow)")
+            }
+            var failed = false
+            for error in config.errors {
+                print("ERROR: \(error.menuRow)")
+                failed = true
+            }
+            if config.providers.isEmpty, config.errors.isEmpty {
+                print("custom: нет включённых провайдеров")
+            }
+            for provider in config.providers {
+                print("")
+                print("-- \(provider.name) (id \(provider.id), kind \(provider.kind.rawValue)) --")
+                if runCustom(provider, now: now, groups: &groups) { failed = true }
+            }
+            return failed
+        }
+    }
+
+    private static func runCustom(
+        _ provider: ConfiguredProvider, now: Date, groups: inout [ProviderGroup]
+    ) -> Bool {
+        print("key source: \(provider.key.sourceDescription)")
+        print("host: \(provider.host.rawValue) · poll: \(provider.pollSeconds) s")
+        let key: String
+        switch KeyResolver.resolve(provider.key) {
+        case .failure(let reason):
+            print("ERROR: \(MenuText.stateRow(name: provider.name, state: .keyError(reason)))")
+            return true
+        case .key(let value):
+            key = value
+            print("key: получен (значение не печатается)")
+        }
+        let outcome = CustomProviderEngine.run(provider: provider, key: key)
+        for step in outcome.steps {
+            if let status = step.httpStatus {
+                print("GET \(step.url) → HTTP \(status)")
+            } else {
+                print("GET \(step.url) → \(step.networkError ?? "нет ответа")")
+            }
+        }
+        switch outcome.result {
+        case .entries(let limits):
+            printProviderReport(limits, now: now)
+            groups.append(ProviderGroup(
+                provider: provider.id, limits: limits, stale: false,
+                titlePrefix: provider.titlePrefix
+            ))
+            return false
+        case .state(.info(let message)):
+            // Informational, NOT a failure (openrouter /credits denied to this key).
+            print("\(MenuText.stateRow(name: provider.name, state: .info(message)))")
+            return false
+        case .state(.ok), .needsCredits:
+            print("ERROR: \(MenuText.stateRow(name: provider.name, state: .parseError("нет данных")))")
+            return true
+        case .state(let state):
+            print("ERROR: \(MenuText.stateRow(name: provider.name, state: state))")
+            return true
+        }
     }
 
     // MARK: - Claude
@@ -198,13 +297,15 @@ enum CheckMode {
 
     private static func printTable(_ limits: [LimitEntry], now: Date) {
         print("parsed limits (\(limits.count)):")
-        let header = [pad("kind", 16), pad("percent", 8), pad("level", 7), pad("resets (local)", 18), "label"]
+        let header = [pad("kind", 16), pad("value", 8), pad("level", 7), pad("resets (local)", 18), "label"]
         print("  " + header.joined())
         for limit in limits {
             let resets = limit.resetsAt.map(localStamp) ?? "—"
+            // Balance-mode entries (v0.4) show the formatted remainder, not a percent.
+            let value = limit.balanceText ?? (limit.unlimited ? "∞" : "\(limit.percent)%")
             let row = [
                 pad(limit.kind, 16),
-                pad("\(limit.percent)%", 8),
+                pad(value, 8),
                 pad(limit.level.name, 7),
                 pad(resets, 18),
                 Labels.menuLabel(for: limit),

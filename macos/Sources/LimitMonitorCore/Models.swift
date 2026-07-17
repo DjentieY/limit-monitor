@@ -44,6 +44,20 @@ public struct LimitEntry: Equatable {
     /// cursor's `isUnlimited` plan and null/0-limit on-demand.
     public var unlimited: Bool
     public var isActive: Bool
+    /// Config providers (v0.4): display name from providers.json (`OpenRouter`);
+    /// nil for the builtin claude/codex/cursor providers.
+    public var providerName: String?
+    /// Explicit bar window label ("1m", "" for none); nil → derived rules.
+    public var windowLabel: String?
+    /// Balance-mode entries (v0.4): formatted remaining amount ("$23.45").
+    /// When set, the segment/menu show the balance instead of a percent.
+    public var balanceText: String?
+    /// Threshold-driven level for balance-mode / okFlag entries.
+    public var levelOverride: Level?
+    /// Balance exhaustion (<= 0 / okFlag false) — independent of `percent`.
+    public var exhaustedOverride: Bool?
+    /// Menu-only rows (zhipu TIME_LIMIT) are excluded from bar segments.
+    public var menuOnly: Bool
 
     public init(
         provider: String = Provider.claude,
@@ -56,7 +70,13 @@ public struct LimitEntry: Equatable {
         scopeDisplayName: String? = nil,
         windowMinutes: Int? = nil,
         unlimited: Bool = false,
-        isActive: Bool = false
+        isActive: Bool = false,
+        providerName: String? = nil,
+        windowLabel: String? = nil,
+        balanceText: String? = nil,
+        levelOverride: Level? = nil,
+        exhaustedOverride: Bool? = nil,
+        menuOnly: Bool = false
     ) {
         self.provider = provider
         self.kind = kind
@@ -69,8 +89,14 @@ public struct LimitEntry: Equatable {
         self.windowMinutes = windowMinutes
         self.unlimited = unlimited
         self.isActive = isActive
+        self.providerName = providerName
+        self.windowLabel = windowLabel
+        self.balanceText = balanceText
+        self.levelOverride = levelOverride
+        self.exhaustedOverride = exhaustedOverride
+        self.menuOnly = menuOnly
     }
 
-    public var level: Level { Level.level(percent: percent, severity: severity) }
-    public var isExhausted: Bool { percent >= 100 }
+    public var level: Level { levelOverride ?? Level.level(percent: percent, severity: severity) }
+    public var isExhausted: Bool { exhaustedOverride ?? (percent >= 100) }
 }

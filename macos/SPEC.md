@@ -451,3 +451,313 @@ Cursor has NO session/weekly windows. Every bucket's `resets_at` =
     segment, green, zero planned notifications.
 20. Three-provider title: `Cl·… ‖ Cx·… ‖ Cu·…` in that order; cursor-only →
     no prefix (`Auto●2% │ API●6%`).
+
+---
+
+# v0.4 — Custom providers: balances & quotas via providers.json (2026-07-17)
+
+Config-driven providers on top of the v0.2 multi-provider architecture.
+`research/providers.md` is NORMATIVE for endpoint shapes, field names and traps
+of every adapter; the fixtures listed below are the parsing source of truth.
+Built-in adapters: `openrouter`, `deepseek`, `moonshot`, `zhipu`; built-in
+presets over the generic engine: `siliconflow`, `novita`; plus `generic-http`
+for anything else. OpenAI/Anthropic have NO balance API (admin spend-reports
+deferred); Groq/Mistral/Cerebras/Together/Fireworks are console-only —
+documented in README, not implemented.
+
+## Config file
+
+- Path: `~/.config/limit-monitor/providers.json`; env var `LIMIT_MONITOR_PROVIDERS`
+  overrides the full path (testing/e2e). Missing file / zero enabled
+  entries → feature silently inactive (`--check` prints one line
+  `custom: нет ~/.config/limit-monitor/providers.json`). Malformed JSON → one
+  disabled menu row `providers.json: ошибка разбора` (never a crash).
+- Schema: top-level `version` (must be 1; other → config-error state),
+  `defaults { pollSeconds }` (default 300), `providers: []`. Entry fields:
+  - `id` — slug `[a-z0-9-]+`, unique, no `|` (invalid/duplicate → that entry
+    in config-error state). Used in notification identifiers and state keys.
+  - `name` (menu), `label` (bar group prefix, 1–8 chars).
+  - `kind` — `openrouter` | `deepseek` | `moonshot` | `zhipu` | `siliconflow` |
+    `novita` | `generic-http`; unknown → config-error entry.
+  - `enabled` (default true; false → entry skipped entirely, not even shown).
+  - `key` — EXACTLY one of `literal` / `env` / `command` (zero or >1 →
+    config-error). `command` runs via `/bin/sh -c`, timeout 10 s, stdout
+    trimmed; resolved on EVERY poll; failure → provider error state
+    `ключ: команда не выполнилась`. `env` is unreliable for Finder-launched
+    apps (launchd env) — README must recommend `command` + Keychain
+    (`security find-generic-password -w`).
+  - `host` — `intl` (default) | `cn`, honored by moonshot/zhipu/siliconflow.
+  - `pollSeconds` per entry (fallback: defaults → 300; clamp min 60).
+  - `request` / `extract` / `display` / `thresholds` — generic-http (see
+    below); presets siliconflow/novita are internally expanded generic
+    configs, user supplies only key/host/thresholds.
+  - `thresholds { warn, critical }` — balance-mode levels; defaults 5.0 / 1.0.
+- A malformed ENTRY degrades only that provider (menu:
+  `<name>: ошибка конфига — <reason>`); the rest keep working.
+- Permissions: if the file is readable by group/others → warning line in
+  `--check` AND one disabled menu row
+  `providers.json доступен другим (chmod 600)`. Never auto-chmod.
+- The file may contain literal keys: NEVER log/print its contents; `--check`
+  prints only the key SOURCE (`env OPENROUTER_API_KEY` / `command` /
+  `literal`), never values.
+
+## Generic engine (`generic-http`; presets build on it)
+
+- `request`: `url`, `method` (only GET in v0.4), `headers` (map),
+  `timeoutSeconds` (default 15). Placeholder `${KEY}` is substituted in the
+  url and in header VALUES (zhipu-style raw-key auth is expressible as
+  `"Authorization": "${KEY}"`).
+- `extract`: `balance { path, scale=1.0, clampMin? }`,
+  `limit { path, scale=1.0 }`, `percentUsed { path }`, `okFlag { path }`.
+  Dot-path: split on `.`, integer segment = array index
+  (`balance_infos.0.total_balance`, `total.val`, `credits`). A value may be a
+  JSON number OR a decimal STRING (strip thousands `,`); parse with `Decimal`.
+  Missing/unparseable required path → parse-error state.
+- Display-mode resolution: `percentUsed` present → percent-mode (value is
+  percent USED, round to Int). Else `balance`+`limit` (limit > 0) →
+  percent-mode with `used% = round(100 * (limit - balance) / limit)`. Else
+  `balance` → balance-mode. None → config-error.
+- Levels: percent-mode → standard v0.1 levels. Balance-mode, on remaining:
+  `> warn` → green; `≤ warn` → orange; `≤ critical` → red; `≤ 0` → red AND
+  exhausted. `okFlag == false` → red AND exhausted regardless of amount.
+- Segments (config providers have no window label): percent-mode `●37%`;
+  balance-mode `●$23.45`. Currency: USD→`$`, CNY→`¥`, EUR→`€` prefixes, other
+  codes → `23.45 XXX`. Amounts: 2 decimals below 1000, `$1.2k` at ≥ 1000,
+  negative `-$2.31`. Menu rows: `● <Name>: 37%` (+ ` · сброс …` when a reset
+  is known) / `● <Name>: осталось $23.45`; exhausted → `● <Name>: баланс
+  исчерпан` / percent form per v0.1.
+- `LimitEntry.provider` = config `id`; generic kind = `custom`.
+
+## Built-in adapters (shapes per research/providers.md §1–6)
+
+- **openrouter** — `GET https://openrouter.ai/api/v1/key`, `Authorization:
+  Bearer ${KEY}`. If `data.limit != null` → ONE percent entry:
+  `used% = round(100 * (limit - limit_remaining) / limit)`, window label by
+  `limit_reset`: daily→`1d`, weekly→`7d`, monthly→`1m`, null→none; no reset
+  instant is available → no reset notification. If `limit == null` → secondary
+  `GET /api/v1/credits`: balance = `total_credits - total_usage` (Decimal;
+  prefer optional `data.remaining_balance` when present). 401/403 on /credits
+  → info state `OpenRouter: баланс недоступен этому ключу` (NOT a --check
+  failure). Body `{"success":false,"error":"Access denied by security
+  policy."}` (any endpoint, RU geo-block) → blocked state `OpenRouter
+  недоступен (гео-блокировка)` — keep last data, IS a --check failure. NEVER
+  print `data.label` (echoes the key). All numeric fields nullable — Optional
+  everywhere.
+- **deepseek** — `GET https://api.deepseek.com/user/balance`, Bearer. Amounts
+  are decimal STRINGS. Prefer `balance_infos` entry with currency `USD`, else
+  first. `is_available == false` → red + exhausted. Currency from the entry.
+- **moonshot** — host intl→`api.moonshot.ai` (USD) / cn→`api.moonshot.cn`
+  (CNY); `GET /v1/users/me/balance`, Bearer; read `data.available_balance`
+  (number). Error envelope `{error:{type:"invalid_authentication_error"}}` →
+  bad-key state `ключ отклонён (нужен platform-ключ этого региона)`.
+- **zhipu** — host intl→`api.z.ai` / cn→`open.bigmodel.cn`;
+  `GET /api/monitor/usage/quota/limit`; headers `Authorization: ${KEY}` (RAW,
+  no Bearer), `Accept-Language: en-US,en`. Errors arrive as HTTP 200: `success
+  == false` + `code == 1001` → bad-key; `code == 500` && `msg` contains
+  "coding plan" (case-insensitive) → no-plan state `нет Coding Plan
+  (PAYG-ключ)`. Success → `data.limits[]` (accept `type` or legacy `name`):
+  `TOKENS_LIMIT` → percent entries: `percentage` = percent USED (round);
+  window from `unit` (3=hours, 4=days, 5=months, 6=weeks) × `number` → label
+  via the codex rule (`5h`, `7d`, months→`1m`); `nextResetTime` (epoch MS) →
+  resets_at → standard reset notifications (minute-rounded stamps).
+  `TIME_LIMIT` (Поиск/MCP counter) → menu-only percent row labelled
+  `Поиск/MCP`, EXCLUDED from the bar. Trap: `usage` = LIMIT, `currentValue` =
+  used — but only `percentage` is consumed. All fields optional-tolerant.
+- **Presets**: siliconflow — `GET https://api.siliconflow.{com|cn}/v1/user/info`,
+  Bearer, balance = `data.totalBalance` (decimal string; currency USD/.com,
+  CNY/.cn); novita — `GET https://api.novita.ai/openapi/v1/billing/balance/detail`,
+  Bearer, balance = `availableBalance` string × 0.0001 USD.
+
+## Multi-provider integration
+
+- Display order: claude, codex, cursor, then config providers in file order.
+- Bar group prefixes (>1 active provider): `Cl·`/`Cx·`/`Cu·` and `<label>·`
+  for config providers (e.g. `OR·●$74.75 ‖ GLM·5h●37% │ 7d●12%`).
+  Single-active → no prefix, as before.
+- Polling per entry (default 300 s), independent runtimes, stale/error
+  isolation, per-provider ⚠ — all per v0.2 rules.
+- Notification identifiers: `reset|<id>|<kind>||<stamp>`,
+  `exhausted|<id>|<kind>||<stamp>`; balance exhaustion uses kind `custom` and
+  an EMPTY stamp — v0.1 empty-stamp dedup semantics apply (kept while
+  exhausted, dropped after recovery).
+- Notification texts: reset — title `Лимиты <Name> обновились`, body
+  `<Name>: лимит <label> сброшен.`; percent ≥100 — title `<Name>: лимит
+  <label> исчерпан`, v0.1 body forms; balance exhausted — title `<Name>:
+  баланс исчерпан`, body `Осталось <formatted>.` (e.g. `Осталось $0.00.`).
+
+## `--check` (v0.4 addition)
+
+- Section per enabled config provider: key source (never values), host, fetch,
+  parsed table, planned notifications. Missing config → single `custom:` line.
+- Exit contract: config-error, key-resolution failure, bad-key, no-plan,
+  blocked, fetch/parse failure of an ENABLED provider → exit 1. Missing config
+  file, `enabled:false`, and the OpenRouter credits-denied info state → NOT
+  failures.
+
+## `checks` additions (fixture-driven)
+
+21. Config parsing: `providers_config_sample.json` → 5 enabled providers
+    (openrouter literal / deepseek env / zhipu command / siliconflow preset /
+    generic-http hyperbolic), kimi entry skipped (`enabled:false`), thresholds
+    and pollSeconds resolved; `providers_config_invalid.json` → per-entry
+    config-errors (two key sources; unknown kind; `|` in id) without crash.
+22. Dot-path/Decimal: array-index path, thousands-comma string, scales 0.0001
+    / 0.01 / −0.01 with `clampMin: 0`, missing path → nil.
+23. openrouter: key fixture → percent entry 26% used, window `1m`; credits
+    fixture → balance `$74.75`; geo-403 fixture → blocked state.
+24. deepseek: sample → `$23.45` USD, green at default thresholds; unavailable
+    variant → red + exhausted, CNY formatting `¥0.00`.
+25. moonshot: sample → `$12.35`; auth-error envelope → bad-key.
+26. zhipu: sample → TOKENS 5h 37% + weekly 7d 12% with resets_at parsed from
+    epoch-ms and minute-rounded identifiers, TIME_LIMIT 7% menu-only (absent
+    from bar segments); 1001 fixture → bad-key; coding-plan-500 fixture →
+    no-plan.
+27. presets: siliconflow sample → `$23.50`; novita sample → `$123.45`.
+28. Balance formatting/levels: `$`/`¥`/`XXX` codes, `$1.2k`, thresholds
+    green/orange/red, ≤0 → red+exhausted, `okFlag:false` → red+exhausted.
+29. Balance-exhaustion notification: identifier `exhausted|<id>|custom||`
+    (empty stamp), RU texts, dedup semantics; zhipu reset notification
+    identifiers minute-rounded.
+30. Multi-provider title: `Cl·… ‖ OR·●$74.75 ‖ GLM·5h●37% │ 7d●12%`; a single
+    active config provider alone → no prefix.
+
+## Fixtures (already authored by the orchestrator — use as-is, do not modify)
+
+`providers_config_sample.json`, `providers_config_invalid.json`,
+`openrouter_key_sample.json`, `openrouter_key_nolimit.json`,
+`openrouter_credits_sample.json`, `openrouter_geo403.json`,
+`deepseek_balance_sample.json`, `deepseek_balance_unavailable.json`,
+`moonshot_balance_sample.json`, `moonshot_error_auth.json`,
+`zhipu_quota_sample.json`, `zhipu_error_1001.json`, `zhipu_error_noplan.json`,
+`siliconflow_user_info_sample.json`, `novita_balance_sample.json`.
+
+## Docs (v0.4)
+
+- README: new "Custom providers (balances)" section — config path, a short
+  example, security notes (chmod 600; `command` + Keychain over `env`), the
+  support matrix (built-ins, presets, generic recipes for Hyperbolic/xAI,
+  document-only: Groq/Mistral/Cerebras/Together/Fireworks console-only;
+  OpenAI/Anthropic have no balance API — admin spend-reports planned), pointer
+  to `examples/providers.example.json` (create it: sample config with env-key
+  entries for all built-ins + one generic recipe, no real keys). Tick the
+  Roadmap checkbox for "Any provider, any balance".
+- llms-install.md: mention `--check` covers configured custom providers.
+
+---
+
+# v0.5 — Settings window, provider toggles, snapshot/--status, desktop card (2026-07-17)
+
+Owner feature request: clicking the status item must give access to Settings
+where providers can be enabled/disabled with CHECKBOXES. Plus the researched
+widget fallback (`research/widget.md` is NORMATIVE: a real WidgetKit .appex is
+BLOCKED under ad-hoc signing by the chronod identity gate — do NOT attempt it;
+the conserved recipe activates only with an Apple-issued identity): snapshot
+file, `--status [--json]`, NSPanel desktop card.
+
+## Settings window («Настройки…»)
+
+- Menu gains item `Настройки…` (⌘,) directly above the final separator +
+  `Выход`. Opens ONE reusable NSWindow (recreate if closed), title
+  `Limit Monitor — настройки`, fixed width ≈ 380, auto height, not resizable,
+  `NSApp.activate` + `makeKeyAndOrderFront` (LSUIElement apps must activate
+  explicitly). Plain AppKit (no SwiftUI — keep zero-dep style).
+- Section `Провайдеры` — one CHECKBOX per known provider:
+  - Built-ins always listed: `Claude`, `Codex`, `Cursor`.
+  - Custom: one row per entry of providers.json (config `name`), shown only
+    when the config has entries (incl. entries with `enabled:false` — shown
+    unchecked-and-disabled with tooltip `выключен в providers.json`).
+  - Checkbox state persisted in UserDefaults `disabledProviders: [String]`
+    (provider ids; built-ins use `claude`/`codex`/`cursor`). Effective
+    enablement: built-in → creds present && NOT disabled; custom → config
+    `enabled` && NOT disabled.
+  - Unchecking applies IMMEDIATELY: polling stops, bar segments and menu rows
+    disappear, snapshot excludes it, pending `reset|<id>|*` notifications are
+    removed right away (explicit reconcile on toggle — this complements the
+    replan-only-on-success rule), no new notifications. Checking re-enables
+    and triggers an immediate poll of that provider.
+  - All providers may be disabled: the status item then shows static `LM`
+    (menu stays reachable, incl. Настройки).
+  - Below the checkboxes: a hint line with the config path
+    `~/.config/limit-monitor/providers.json` and a button
+    `Показать в Finder` (NSWorkspace reveal; disabled when the file does not
+    exist).
+- Section `Общие` — mirrors of the existing menu toggles (same UserDefaults,
+  two-way sync): `Уведомления о лимитах`, `Запускать при входе`,
+  `Виджет на рабочем столе` (new, below).
+- `--check` reflects disabled providers with line `<id>: отключён в настройках`
+  (skipped, NOT a failure).
+
+## Widget-ready snapshot + `--status`
+
+- After every poll cycle the app atomically (temp file + rename) writes
+  `~/Library/Application Support/limit-monitor/widget-snapshot.json`:
+  ```json
+  { "version": 1, "generatedAt": "2026-07-17T09:00:00+00:00", "providers": [
+    { "id": "claude", "name": "Claude", "label": "Cl", "stale": false,
+      "limits": [ { "kind": "session", "label": "5-часовой", "windowLabel": "5h",
+        "percent": 9, "text": "9%", "level": "green",
+        "resetsAt": "2026-07-17T09:30:00+00:00", "exhausted": false } ] },
+    { "id": "deepseek", "name": "DeepSeek", "label": "DS", "stale": false,
+      "limits": [ { "kind": "custom", "label": "DeepSeek", "text": "$23.45",
+        "level": "green", "exhausted": false } ] } ] }
+  ```
+  Only providers with data; disabled providers excluded; NO secrets ever
+  (numbers, labels, ISO UTC times only). `--check` ALSO writes the snapshot on
+  success (so agents get a fresh file without the GUI).
+- New CLI modes (before any AppKit setup, like `--check`):
+  - `--status` — human RU table rendered FROM the snapshot file (per provider:
+    rows with percent/balance, level word, reset time; header
+    `Обновлено: HH:mm` + suffix `(устарело)` when `generatedAt` older than
+    15 min). No network.
+  - `--status --json` — print the snapshot file verbatim. Exit 0.
+  - Snapshot missing/unreadable → RU line `снапшот недоступен — запусти
+    Limit Monitor или limit-monitor --check` + exit 2.
+- README: document `--status --json` as the agent/SwiftBar/xbar/Raycast
+  integration point (one-line SwiftBar plugin example).
+
+## Desktop card (NSPanel — the ad-hoc-compatible "widget")
+
+- Toggle `Виджет на рабочем столе` (menu + settings; UserDefaults
+  `desktopCard`, default OFF).
+- Non-activating NSPanel (`.nonactivatingPanel`), NSVisualEffectView material
+  `.hudWindow`, corner radius 12, `isMovableByWindowBackground = true`,
+  position persisted in UserDefaults `cardOrigin` (default: top-right of the
+  main screen, 16 px margins; clamp into the visible frame on restore),
+  `level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)`
+  (above desktop icons, below normal windows),
+  `collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]` —
+  per research/widget.md risk table (no Mission Control flicker).
+- Content, rebuilt after every poll from the same merged model as the menu:
+  per enabled provider with data — header line (provider name, ⚠ when
+  stale/expired) and one row per limit: colored dot (same level colors),
+  label, value (`9%` / `$23.45` / `∞`), short reset time (`до 12:30`).
+  Compact system font; ~260 pt wide.
+- The card never takes focus, never appears in the Dock/app switcher, closes
+  when the toggle is switched off. No WidgetKit, no .appex, platforms stay
+  `.v13`.
+
+## `checks` additions (31–35)
+
+31. Snapshot builder: fixture-driven providers (claude fixture + a balance
+    custom) → schema-v1 JSON: version 1, ISO-8601 UTC `generatedAt`/`resetsAt`,
+    level strings, exhausted flags; output contains NO `sk-`, `eyJ`, `Bearer`
+    substrings.
+32. Snapshot round-trip: builder output parses back; staleness rule
+    (generatedAt older than 15 min vs fixed now → stale).
+33. `disabledProviders` filtering: a disabled provider is excluded from title
+    segments, menu model, notification desired-set AND snapshot; its pending
+    `reset|<id>|*` identifiers become removable in the reconcile plan.
+34. Settings model: toggle off → on yields an immediate-poll request for
+    exactly that provider (Core-level model, no AppKit).
+35. `--status` rendering: given a snapshot fixture — human table contains RU
+    labels, level words and `(устарело)` for an old generatedAt; `--status
+    --json` output is byte-identical to the file.
+
+## Docs (v0.5)
+
+- README Features: settings window with provider checkboxes; desktop card;
+  `--status --json`. Roadmap: tick the macOS-widget item, rewording it to
+  `desktop card + snapshot/status JSON (real WidgetKit widget requires an
+  Apple-signed build — recipe conserved in research/widget.md)`.
+- llms-install.md: `--status --json` for agents (prefer it over `--check` for
+  frequent polling — no network).

@@ -1,0 +1,18 @@
+{
+  "code": 20000,
+  "message": "OK",
+  "status": true,
+  "data": {
+    "id": "user_0001",
+    "name": "",
+    "image": "",
+    "email": "",
+    "isAdmin": false,
+    "balance": "3.50",
+    "status": "normal",
+    "introduction": "",
+    "role": "",
+    "chargeBalance": "20.00",
+    "totalBalance": "23.50"
+  }
+}

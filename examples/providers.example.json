@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "defaults": { "pollSeconds": 300 },
+  "providers": [
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "label": "OR",
+      "kind": "openrouter",
+      "enabled": false,
+      "key": { "env": "OPENROUTER_API_KEY" },
+      "thresholds": { "warn": 5, "critical": 1 }
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "label": "DS",
+      "kind": "deepseek",
+      "enabled": false,
+      "key": { "env": "DEEPSEEK_API_KEY" },
+      "thresholds": { "warn": 3, "critical": 0.5 }
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi",
+      "label": "Ki",
+      "kind": "moonshot",
+      "host": "intl",
+      "enabled": false,
+      "key": { "env": "MOONSHOT_API_KEY" },
+      "thresholds": { "warn": 3, "critical": 0.5 }
+    },
+    {
+      "id": "glm",
+      "name": "GLM",
+      "label": "GLM",
+      "kind": "zhipu",
+      "host": "intl",
+      "enabled": false,
+      "key": { "env": "ZAI_API_KEY" }
+    },
+    {
+      "id": "siliconflow",
+      "name": "SiliconFlow",
+      "label": "SF",
+      "kind": "siliconflow",
+      "host": "intl",
+      "enabled": false,
+      "key": { "env": "SILICONFLOW_API_KEY" },
+      "thresholds": { "warn": 5, "critical": 1 }
+    },
+    {
+      "id": "novita",
+      "name": "Novita",
+      "label": "Nv",
+      "kind": "novita",
+      "enabled": false,
+      "key": { "env": "NOVITA_API_KEY" },
+      "thresholds": { "warn": 5, "critical": 1 }
+    },
+    {
+      "id": "hyperbolic",
+      "name": "Hyperbolic",
+      "label": "Hy",
+      "kind": "generic-http",
+      "enabled": false,
+      "key": { "env": "HYPERBOLIC_API_KEY" },
+      "request": {
+        "url": "https://api.hyperbolic.xyz/billing/get_current_balance",
+        "method": "GET",
+        "headers": { "Authorization": "Bearer ${KEY}" },
+        "timeoutSeconds": 15
+      },
+      "extract": { "balance": { "path": "credits", "scale": 0.01 } },
+      "display": { "mode": "balance", "currency": "USD" },
+      "thresholds": { "warn": 5, "critical": 1 }
+    }
+  ]
+}

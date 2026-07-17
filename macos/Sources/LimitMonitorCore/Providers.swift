@@ -6,7 +6,14 @@ public enum Provider {
     public static let cursor = "cursor"
 
     /// Display order for merged titles/menus: claude first, then codex (then cursor in v0.3).
+    /// Config providers (v0.4) come after, in providers.json file order.
     public static let displayOrder = [claude, codex, cursor]
+
+    /// Builtin providers with dedicated adapters/labels; anything else is a
+    /// config provider id from providers.json.
+    public static func isBuiltin(_ provider: String) -> Bool {
+        provider == claude || provider == codex || provider == cursor
+    }
 
     public static func displayName(_ provider: String) -> String {
         switch provider {

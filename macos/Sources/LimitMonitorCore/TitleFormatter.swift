@@ -21,11 +21,15 @@ public struct ProviderGroup: Equatable {
     public var provider: String
     public var limits: [LimitEntry]
     public var stale: Bool
+    /// Config providers (v0.4): bar prefix from providers.json `label` ("OR·");
+    /// nil → the builtin Cl·/Cx·/Cu· mapping.
+    public var titlePrefix: String?
 
-    public init(provider: String, limits: [LimitEntry], stale: Bool = false) {
+    public init(provider: String, limits: [LimitEntry], stale: Bool = false, titlePrefix: String? = nil) {
         self.provider = provider
         self.limits = limits
         self.stale = stale
+        self.titlePrefix = titlePrefix
     }
 }
 
@@ -36,7 +40,11 @@ public enum TitleFormatter {
     public static let providerSeparator = " \u{2016} "
 
     public static func segments(for limits: [LimitEntry]) -> [TitleSegment] {
-        limits.map { limit in
+        limits.filter { !$0.menuOnly }.map { limit in
+            if let balanceText = limit.balanceText {
+                // Config balance segments have no window label: ●$23.45.
+                return TitleSegment(pre: limit.windowLabel ?? "", post: balanceText, level: limit.level)
+            }
             if limit.unlimited {
                 if limit.kind == "cursor_unlimited" {
                     return TitleSegment(pre: "", post: "∞", level: limit.level, dotless: true)
@@ -65,10 +73,12 @@ public enum TitleFormatter {
         guard !groups.isEmpty else { return "…" }
         if groups.count == 1 { return plainTitle(for: groups[0].limits, stale: groups[0].stale) }
         return groups.map { group in
-            let body = group.limits.isEmpty
+            let groupSegments = segments(for: group.limits)
+            let body = groupSegments.isEmpty
                 ? "…"
-                : segments(for: group.limits).map(\.text).joined(separator: separator)
-            return (group.stale ? "⚠" : "") + Provider.titlePrefix(group.provider) + body
+                : groupSegments.map(\.text).joined(separator: separator)
+            let prefix = group.titlePrefix ?? Provider.titlePrefix(group.provider)
+            return (group.stale ? "⚠" : "") + prefix + body
         }.joined(separator: providerSeparator)
     }
 }

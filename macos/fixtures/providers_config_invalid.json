@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "two-keys",
+      "name": "TwoKeys",
+      "label": "TK",
+      "kind": "generic-http",
+      "key": { "env": "SOME_ENV", "literal": "also-a-literal" },
+      "request": { "url": "https://example.com/balance", "headers": {} },
+      "extract": { "balance": { "path": "x" } }
+    },
+    {
+      "id": "mystery",
+      "name": "Mystery",
+      "label": "My",
+      "kind": "quantum-ledger",
+      "key": { "env": "SOME_ENV" }
+    },
+    {
+      "id": "bad|id",
+      "name": "BadId",
+      "label": "BI",
+      "kind": "deepseek",
+      "key": { "env": "SOME_ENV" }
+    }
+  ]
+}

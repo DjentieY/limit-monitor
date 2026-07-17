@@ -73,7 +73,7 @@ public enum NotificationPlanner {
                 scheduled.append(PlannedReset(
                     identifier: resetIdentifier(for: limit),
                     fireDate: date.addingTimeInterval(5),
-                    title: Labels.resetTitle(forProvider: limit.provider),
+                    title: Labels.resetTitle(for: limit),
                     body: Labels.resetBody(for: limit)
                 ))
             }
@@ -81,7 +81,10 @@ public enum NotificationPlanner {
                 let identifier = exhaustedIdentifier(for: limit)
                 if alreadyNotified[identifier] != true {
                     let body: String
-                    if let date = limit.resetsAt {
+                    if let balanceText = limit.balanceText {
+                        // Balance exhaustion (v0.4): `Осталось $0.00.`
+                        body = "Осталось \(balanceText)."
+                    } else if let date = limit.resetsAt {
                         body = "Возобновится \(TimeFormat.relative(date, now: now)) (\(TimeFormat.absolute(date, now: now)))."
                     } else {
                         body = "Время возобновления неизвестно."

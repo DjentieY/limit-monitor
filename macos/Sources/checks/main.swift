@@ -351,8 +351,8 @@ eq(CodexAuthParser.parse(data: Data("not json".utf8)), CodexAuthState.invalid, "
 
 // -- 14. Codex RU labels & notification texts ---------------------------------------
 
-eq(Labels.resetTitle(forProvider: Provider.claude), "Лимиты Claude обновились", "14. claude reset title")
-eq(Labels.resetTitle(forProvider: Provider.codex), "Лимиты Codex обновились", "14. codex reset title")
+eq(Labels.resetTitle(for: limits[0]), "Лимиты Claude обновились", "14. claude reset title")
+eq(Labels.resetTitle(for: codexLimits[0]), "Лимиты Codex обновились", "14. codex reset title")
 eq(Labels.menuLabel(for: codexLimits[0]), "5-часовой", "14. codex ≈300 min label")
 eq(Labels.menuLabel(for: codexLimits[1]), "Недельный", "14. codex ≈10080 min label")
 eq(Labels.menuLabel(for: codexLimits[2]), "Недельный · Spark", "14. codex scoped label appends name")
@@ -469,7 +469,7 @@ eq(CursorAuth.unquote("abc"), "abc", "18. unquote leaves raw values alone")
 eq(Labels.menuLabel(for: cursorLimits[0]), "Auto+Composer", "19. RU label Auto+Composer")
 eq(Labels.menuLabel(for: cursorLimits[1]), "API-модели", "19. RU label API-модели")
 eq(Labels.menuLabel(for: cursorOnDemand[2]), "On-demand", "19. RU label On-demand")
-eq(Labels.resetTitle(forProvider: Provider.cursor), "Лимиты Cursor обновились", "19. cursor reset title")
+eq(Labels.resetTitle(for: cursorLimits[0]), "Лимиты Cursor обновились", "19. cursor reset title")
 eq(Labels.resetBody(for: cursorLimits[0]), "Cursor: лимит Auto+Composer сброшен.", "19. auto reset body")
 eq(Labels.resetBody(for: cursorLimits[1]), "Cursor: лимит API сброшен.", "19. api reset body")
 eq(Labels.resetBody(for: cursorOnDemand[2]), "Cursor: лимит on-demand сброшен.", "19. on-demand reset body")
@@ -525,6 +525,452 @@ eq(TitleFormatter.plainTitle(groups: [ProviderGroup(provider: Provider.cursor, l
 eq(Provider.sortIndex(Provider.claude) < Provider.sortIndex(Provider.codex)
    && Provider.sortIndex(Provider.codex) < Provider.sortIndex(Provider.cursor), true,
    "20. display order claude < codex < cursor")
+
+// -- 21. providers.json config parsing ------------------------------------------
+
+let providersConfigData = loadFixture("fixtures/providers_config_sample.json")
+let providersConfigInvalidData = loadFixture("fixtures/providers_config_invalid.json")
+
+guard case .parsed(let providersConfig) = ProvidersConfigParser.parse(data: providersConfigData) else {
+    print("FATAL: providers_config_sample.json did not parse")
+    exit(1)
+}
+eq(providersConfig.providers.count, 5, "21. sample config → 5 enabled providers")
+eq(providersConfig.providers.map(\.id), ["openrouter", "deepseek", "glm", "sf", "hyper"],
+   "21. file order kept, kimi (enabled:false) skipped entirely")
+eq(providersConfig.errors.count, 0, "21. sample config has no entry errors")
+eq(providersConfig.providers.map(\.kind),
+   [ConfigProviderKind.openrouter, .deepseek, .zhipu, .siliconflow, .genericHTTP],
+   "21. kinds openrouter/deepseek/zhipu/siliconflow/generic-http")
+
+let orProvider = providersConfig.providers[0]
+let dsProvider = providersConfig.providers[1]
+let glmProvider = providersConfig.providers[2]
+let sfProvider = providersConfig.providers[3]
+let hyProvider = providersConfig.providers[4]
+if case .literal = orProvider.key {
+    check(true, "21. openrouter key is a literal")
+} else {
+    check(false, "21. openrouter key is a literal")
+}
+eq(orProvider.key.sourceDescription, "literal", "21. literal source description (no value)")
+eq(dsProvider.key, KeySource.env("DEEPSEEK_API_KEY"), "21. deepseek env key")
+eq(dsProvider.key.sourceDescription, "env DEEPSEEK_API_KEY", "21. env source description names the variable")
+eq(glmProvider.key, KeySource.command("echo test-key"), "21. zhipu command key")
+eq(glmProvider.key.sourceDescription, "command", "21. command source description (no command text)")
+eq(glmProvider.host, ProviderHost.intl, "21. zhipu host intl")
+eq(providersConfig.providers.map(\.pollSeconds), [300, 300, 600, 300, 300],
+   "21. pollSeconds resolved: defaults 300, glm per-entry 600")
+eq(dsProvider.thresholds, ProviderThresholds(warn: 3, critical: Decimal(string: "0.5")!),
+   "21. deepseek thresholds 3/0.5")
+eq(orProvider.thresholds, ProviderThresholds(warn: 5, critical: 1), "21. default thresholds 5/1")
+eq(sfProvider.request?.url, "https://api.siliconflow.com/v1/user/info",
+   "21. siliconflow preset expanded to the intl URL")
+eq(sfProvider.extract?.balance?.path, "data.totalBalance", "21. siliconflow preset balance path")
+eq(sfProvider.display?.currency, "USD", "21. siliconflow intl currency USD")
+eq(hyProvider.extract?.balance?.scale, Decimal(string: "0.01")!, "21. hyperbolic generic scale 0.01")
+eq(hyProvider.titlePrefix, "Hy·", "21. config bar prefix is <label>·")
+
+guard case .parsed(let invalidConfig) = ProvidersConfigParser.parse(data: providersConfigInvalidData) else {
+    print("FATAL: providers_config_invalid.json did not parse")
+    exit(1)
+}
+eq(invalidConfig.providers.count, 0, "21. invalid config yields no providers")
+eq(invalidConfig.errors.count, 3, "21. three per-entry config errors, no crash")
+eq(invalidConfig.errors.map(\.name), ["TwoKeys", "Mystery", "BadId"], "21. errors keep entry names")
+check(invalidConfig.errors[0].reason.contains("literal/env/command"),
+      "21. two key sources → key config-error")
+check(invalidConfig.errors[1].reason.contains("kind"), "21. unknown kind → config-error")
+check(invalidConfig.errors[2].reason.contains("id"), "21. | in id → config-error")
+eq(invalidConfig.errors[1].menuRow, "Mystery: ошибка конфига — неизвестный kind: quantum-ledger",
+   "21. config-error menu row form")
+check(ProviderState.configError("x").isCheckFailure, "21. config-error IS a --check failure")
+check(ProviderState.keyError(KeyResolutionStrings.commandFailed).isCheckFailure,
+      "21. key-resolution failure IS a --check failure")
+eq(MenuText.stateRow(name: "GLM", state: .keyError(KeyResolutionStrings.commandFailed)),
+   "GLM: ключ: команда не выполнилась", "21. key-command failure RU row")
+eq(ProvidersConfigParser.parse(data: Data("not json".utf8)), ProvidersConfigParser.ParseResult.malformed,
+   "21. malformed JSON → .malformed, never a crash")
+eq(ProvidersConfigParser.parse(data: Data(#"{"version":2,"providers":[]}"#.utf8)),
+   ProvidersConfigParser.ParseResult.unsupportedVersion, "21. version != 1 → unsupported")
+let clampJSON = #"{"version":1,"defaults":{"pollSeconds":10},"providers":[{"id":"x1","name":"X","label":"X","kind":"deepseek","key":{"env":"E"},"pollSeconds":10},{"id":"x2","name":"Y","label":"Y","kind":"deepseek","key":{"env":"E"}}]}"#
+guard case .parsed(let clampConfig) = ProvidersConfigParser.parse(data: Data(clampJSON.utf8)) else {
+    print("FATAL: clamp config did not parse")
+    exit(1)
+}
+eq(clampConfig.providers.map(\.pollSeconds), [60, 60],
+   "21. pollSeconds clamped to min 60 (per-entry and defaults)")
+let dupJSON = #"{"version":1,"providers":[{"id":"dup","name":"First","label":"F1","kind":"deepseek","key":{"env":"E"}},{"id":"dup","name":"Second","label":"F2","kind":"deepseek","key":{"env":"E"}}]}"#
+guard case .parsed(let dupConfig) = ProvidersConfigParser.parse(data: Data(dupJSON.utf8)) else {
+    print("FATAL: duplicate-id config did not parse")
+    exit(1)
+}
+eq(dupConfig.providers.map(\.id), ["dup"], "21. duplicate id: first entry still parses")
+eq(dupConfig.errors.map(\.reason), ["дублирующийся id"], "21. duplicate id: second entry → config-error")
+eq(dupConfig.errors.first?.name, "Second", "21. duplicate-id error keeps the entry name")
+
+// -- 22. Dot-path extraction + Decimal ---------------------------------------------
+
+let pathJSON = #"{"a":[{"v":"1,234.56"},{"v":42}],"total":{"val":"-2317"},"credits":2350,"flag":true}"#
+let pathRoot = (try? JSONSerialization.jsonObject(with: Data(pathJSON.utf8))) ?? [:]
+eq(JSONPath.decimal(at: "a.0.v", in: pathRoot), Decimal(string: "1234.56")!,
+   "22. array-index path + thousands-comma string")
+eq(JSONPath.decimal(at: "a.1.v", in: pathRoot), Decimal(42), "22. JSON number via dot-path")
+eq(JSONPath.decimal(at: "total.val", in: pathRoot), Decimal(-2317), "22. nested decimal string")
+eq(JSONPath.decimal(at: "a.5.v", in: pathRoot), nil, "22. out-of-range array index → nil")
+eq(JSONPath.decimal(at: "nope.x", in: pathRoot), nil, "22. missing path → nil")
+eq(JSONPath.decimal(at: "flag", in: pathRoot), nil, "22. boolean is not a number")
+eq(JSONPath.bool(at: "flag", in: pathRoot), true, "22. okFlag-style bool extraction")
+eq(FieldSpec(path: "credits", scale: Decimal(string: "0.01")!).resolve(in: pathRoot),
+   Decimal(string: "23.5")!, "22. hyperbolic cents scale 0.01")
+let novitaRoot = (try? JSONSerialization.jsonObject(with: Data(#"{"availableBalance":"1234500"}"#.utf8))) ?? [:]
+eq(FieldSpec(path: "availableBalance", scale: Decimal(string: "0.0001")!).resolve(in: novitaRoot),
+   Decimal(string: "123.45")!, "22. novita 1/10000-USD scale 0.0001 stays exact in Decimal")
+eq(FieldSpec(path: "total.val", scale: Decimal(string: "-0.01")!, clampMin: 0).resolve(in: pathRoot),
+   Decimal(string: "23.17")!, "22. xAI inverted-sign scale −0.01")
+let xaiPositiveRoot = (try? JSONSerialization.jsonObject(with: Data(#"{"total":{"val":"100"}}"#.utf8))) ?? [:]
+eq(FieldSpec(path: "total.val", scale: Decimal(string: "-0.01")!, clampMin: 0).resolve(in: xaiPositiveRoot),
+   Decimal(0), "22. clampMin 0 floors a negative result")
+
+// -- 23. OpenRouter adapter ----------------------------------------------------------
+
+let orKeyData = loadFixture("fixtures/openrouter_key_sample.json")
+let orKeyNoLimitData = loadFixture("fixtures/openrouter_key_nolimit.json")
+let orCreditsData = loadFixture("fixtures/openrouter_credits_sample.json")
+let orGeoData = loadFixture("fixtures/openrouter_geo403.json")
+
+if case .entries(let orKeyEntries) = OpenRouterAdapter.parseKey(data: orKeyData, httpStatus: 200, provider: orProvider),
+   orKeyEntries.count == 1 {
+    let entry = orKeyEntries[0]
+    eq(entry.percent, 26, "23. /key percent used = round(100·(100−74.5)/100) = 26")
+    eq(Labels.windowLabel(for: entry), "1m", "23. limit_reset monthly → window label 1m")
+    eq(entry.provider, "openrouter", "23. entry provider = config id")
+    eq(entry.resetsAt, nil, "23. /key has no reset instant → no reset notification")
+    eq(entry.level, Level.green, "23. 26% → green")
+    eq(TitleFormatter.segments(for: [entry]).map(\.text), ["1m●26%"], "23. /key segment 1m●26%")
+    eq(MenuText.infoRow(for: entry), "OpenRouter: 26%", "23. percent menu row without reset")
+} else {
+    check(false, "23. /key with limit → one percent entry")
+}
+eq(OpenRouterAdapter.parseKey(data: orKeyNoLimitData, httpStatus: 200, provider: orProvider),
+   AdapterResult.needsCredits, "23. limit null → falls back to /credits")
+if case .entries(let orCreditEntries) = OpenRouterAdapter.parseCredits(data: orCreditsData, httpStatus: 200, provider: orProvider),
+   orCreditEntries.count == 1 {
+    eq(orCreditEntries[0].balanceText, "$74.75", "23. credits balance 100.5 − 25.75 = $74.75 (Decimal)")
+    eq(orCreditEntries[0].level, Level.green, "23. balance green at default thresholds")
+    eq(TitleFormatter.segments(for: orCreditEntries).map(\.text), ["●$74.75"], "23. balance segment ●$74.75")
+    eq(MenuText.infoRow(for: orCreditEntries[0]), "OpenRouter: осталось $74.75", "23. balance menu row")
+} else {
+    check(false, "23. /credits → one balance entry")
+}
+eq(OpenRouterAdapter.parseKey(data: orGeoData, httpStatus: 403, provider: orProvider),
+   AdapterResult.state(.blocked), "23. geo-403 body → blocked state (not bad-key)")
+eq(OpenRouterAdapter.parseKey(data: Data("<html>cf challenge</html>".utf8), httpStatus: 403, provider: orProvider),
+   AdapterResult.state(.fetchError("HTTP 403 (не-JSON ответ)")),
+   "23. non-JSON 403 (Cloudflare challenge) → fetch-error, not bad-key")
+eq(OpenRouterAdapter.parseKey(data: Data(#"{"error":{"message":"invalid key"}}"#.utf8), httpStatus: 401, provider: orProvider),
+   AdapterResult.state(.badKey("ключ отклонён")), "23. JSON-bodied 401 → bad-key")
+eq(OpenRouterAdapter.parseCredits(data: orGeoData, httpStatus: 403, provider: orProvider),
+   AdapterResult.state(.blocked), "23. geo body on /credits → blocked too")
+eq(MenuText.stateRow(name: "OpenRouter", state: .blocked), "OpenRouter недоступен (гео-блокировка)",
+   "23. blocked RU row")
+check(ProviderState.blocked.isCheckFailure, "23. blocked IS a --check failure")
+eq(OpenRouterAdapter.parseCredits(data: orCreditsData, httpStatus: 401, provider: orProvider),
+   AdapterResult.state(.info("баланс недоступен этому ключу")), "23. credits 401 → info state")
+eq(MenuText.stateRow(name: "OpenRouter", state: .info("баланс недоступен этому ключу")),
+   "OpenRouter: баланс недоступен этому ключу", "23. info RU row")
+check(!ProviderState.info("баланс недоступен этому ключу").isCheckFailure,
+      "23. credits-denied info state is NOT a --check failure")
+
+// -- 24. DeepSeek adapter -------------------------------------------------------------
+
+let dsSampleData = loadFixture("fixtures/deepseek_balance_sample.json")
+let dsUnavailableData = loadFixture("fixtures/deepseek_balance_unavailable.json")
+
+if case .entries(let dsEntries) = DeepSeekAdapter.parse(data: dsSampleData, httpStatus: 200, provider: dsProvider),
+   dsEntries.count == 1 {
+    eq(dsEntries[0].balanceText, "$23.45", "24. decimal-string balance → $23.45")
+    eq(dsEntries[0].level, Level.green, "24. green at thresholds")
+    eq(dsEntries[0].isExhausted, false, "24. is_available=true → not exhausted")
+} else {
+    check(false, "24. deepseek sample → one balance entry")
+}
+let dsMultiJSON = #"{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"1.00"},{"currency":"USD","total_balance":"7.00"}]}"#
+if case .entries(let dsMultiEntries) = DeepSeekAdapter.parse(data: Data(dsMultiJSON.utf8), httpStatus: 200, provider: dsProvider),
+   dsMultiEntries.count == 1 {
+    eq(dsMultiEntries[0].balanceText, "$7.00", "24. USD entry preferred over first (CNY)")
+} else {
+    check(false, "24. multi-currency deepseek → one entry")
+}
+if case .entries(let dsBadEntries) = DeepSeekAdapter.parse(data: dsUnavailableData, httpStatus: 200, provider: dsProvider),
+   dsBadEntries.count == 1 {
+    eq(dsBadEntries[0].balanceText, "¥0.00", "24. CNY formatting ¥0.00")
+    eq(dsBadEntries[0].level, Level.red, "24. is_available=false → red")
+    check(dsBadEntries[0].isExhausted, "24. is_available=false → exhausted")
+} else {
+    check(false, "24. deepseek unavailable → one balance entry")
+}
+
+// -- 25. Moonshot adapter ---------------------------------------------------------------
+
+let msSampleData = loadFixture("fixtures/moonshot_balance_sample.json")
+let msAuthErrorData = loadFixture("fixtures/moonshot_error_auth.json")
+
+let moonCfgJSON = #"{"version":1,"providers":[{"id":"kimi","name":"Kimi","label":"Ki","kind":"moonshot","key":{"env":"K"}},{"id":"kimi-cn","name":"KimiCN","label":"Kc","kind":"moonshot","host":"cn","key":{"env":"K"}}]}"#
+guard case .parsed(let moonConfig) = ProvidersConfigParser.parse(data: Data(moonCfgJSON.utf8)),
+      moonConfig.providers.count == 2 else {
+    print("FATAL: moonshot test config did not parse")
+    exit(1)
+}
+if case .entries(let msEntries) = MoonshotAdapter.parse(data: msSampleData, httpStatus: 200, provider: moonConfig.providers[0]),
+   msEntries.count == 1 {
+    eq(msEntries[0].balanceText, "$12.35", "25. available_balance 12.34567 → $12.35 (intl = USD)")
+    eq(msEntries[0].level, Level.green, "25. green at default thresholds")
+} else {
+    check(false, "25. moonshot sample → one balance entry")
+}
+if case .entries(let msCNEntries) = MoonshotAdapter.parse(data: msSampleData, httpStatus: 200, provider: moonConfig.providers[1]) {
+    eq(msCNEntries.first?.balanceText, "¥12.35", "25. cn host → CNY formatting")
+} else {
+    check(false, "25. moonshot cn host → entry")
+}
+eq(MoonshotAdapter.parse(data: msAuthErrorData, httpStatus: 401, provider: moonConfig.providers[0]),
+   AdapterResult.state(.badKey("ключ отклонён (нужен platform-ключ этого региона)")),
+   "25. auth-error envelope → bad-key state")
+eq(MenuText.stateRow(name: "Kimi", state: .badKey("ключ отклонён (нужен platform-ключ этого региона)")),
+   "Kimi: ключ отклонён (нужен platform-ключ этого региона)", "25. bad-key RU row")
+check(ProviderState.badKey("x").isCheckFailure, "25. bad-key IS a --check failure")
+
+// -- 26. Zhipu adapter --------------------------------------------------------------------
+
+let zhipuSampleData = loadFixture("fixtures/zhipu_quota_sample.json")
+let zhipu1001Data = loadFixture("fixtures/zhipu_error_1001.json")
+let zhipuNoPlanData = loadFixture("fixtures/zhipu_error_noplan.json")
+
+var glmEntries: [LimitEntry] = []
+if case .entries(let parsed) = ZhipuAdapter.parse(data: zhipuSampleData, httpStatus: 200, provider: glmProvider) {
+    glmEntries = parsed
+}
+guard glmEntries.count == 3 else {
+    print("FATAL: zhipu fixture parsed into \(glmEntries.count) entries, expected 3")
+    exit(1)
+}
+eq(glmEntries.map(\.percent), [37, 12, 7], "26. percents 37/12/7 (37.4/12.0/6.6 rounded)")
+eq(glmEntries.map(\.kind), ["window_300m", "window_10080m", "time_limit"], "26. kinds from unit×number")
+eq(glmEntries.map(\.windowMinutes), [300, 10080, 43200], "26. window minutes 5h/1w/1mo")
+eq(glmEntries.prefix(2).map { Labels.windowLabel(for: $0) }, ["5h", "7d"], "26. bar labels 5h/7d")
+eq(glmEntries.map(\.menuOnly), [false, false, true], "26. TIME_LIMIT is menu-only")
+eq(TitleFormatter.segments(for: glmEntries).map(\.text), ["5h●37%", "7d●12%"],
+   "26. TIME_LIMIT absent from bar segments")
+eq(glmEntries.map { Labels.menuLabel(for: $0) }, ["5-часовой", "Недельный", "Поиск/MCP"],
+   "26. RU menu labels incl. Поиск/MCP")
+check(glmEntries.allSatisfy { $0.resetsAt != nil }, "26. nextResetTime epoch-ms parsed for all rows")
+eq(utc.string(from: glmEntries[0].resetsAt!), "2026-07-21T10:30:00", "26. 5h reset instant from epoch ms")
+eq(utc.string(from: glmEntries[1].resetsAt!), "2026-07-26T10:30:00", "26. weekly reset instant")
+let glmPlan = NotificationPlanner.plan(limits: glmEntries, now: codexNow, alreadyNotified: [:])
+eq(glmPlan.scheduled.map(\.identifier), [
+    "reset|glm|window_300m||2026-07-21T10:30:00+00:00",
+    "reset|glm|window_10080m||2026-07-26T10:30:00+00:00",
+    "reset|glm|time_limit||2026-08-12T07:30:00+00:00",
+], "26. reset identifiers: config id, empty scope, minute-rounded stamps")
+eq(glmPlan.scheduled[0].title, "Лимиты GLM обновились", "26. reset title uses config name")
+eq(glmPlan.scheduled[0].body, "GLM: лимит 5-часовой сброшен.", "26. reset body names the window")
+eq(MenuText.infoRow(for: glmEntries[2], now: codexNow),
+   "Поиск/MCP: 7% · сброс \(TimeFormat.absolute(glmEntries[2].resetsAt!, now: codexNow))",
+   "26. Поиск/MCP menu row form")
+var zhipuAliasRoot = (try? JSONSerialization.jsonObject(with: zhipuSampleData)) as? [String: Any] ?? [:]
+var zhipuAliasData0 = zhipuAliasRoot["data"] as? [String: Any] ?? [:]
+let zhipuAliasLimits = (zhipuAliasData0["limits"] as? [[String: Any]] ?? []).map { item -> [String: Any] in
+    var copy = item
+    if let type = copy.removeValue(forKey: "type") { copy["name"] = type }
+    return copy
+}
+zhipuAliasData0["limits"] = zhipuAliasLimits
+zhipuAliasRoot["data"] = zhipuAliasData0
+let zhipuAliasData = (try? JSONSerialization.data(withJSONObject: zhipuAliasRoot)) ?? Data()
+if case .entries(let aliasEntries) = ZhipuAdapter.parse(data: zhipuAliasData, httpStatus: 200, provider: glmProvider) {
+    eq(aliasEntries.count, 3, "26. legacy `name` accepted as `type` alias")
+    eq(aliasEntries.map(\.percent), glmEntries.map(\.percent), "26. alias parse identical percents")
+} else {
+    check(false, "26. name-alias fixture parses")
+}
+eq(ZhipuAdapter.parse(data: zhipu1001Data, httpStatus: 200, provider: glmProvider),
+   AdapterResult.state(.badKey("ключ отклонён")), "26. HTTP-200 code 1001 → bad-key")
+eq(ZhipuAdapter.parse(data: zhipuNoPlanData, httpStatus: 200, provider: glmProvider),
+   AdapterResult.state(.noPlan), "26. code 500 + \"coding plan\" → no-plan")
+eq(MenuText.stateRow(name: "GLM", state: .noPlan), "GLM: нет Coding Plan (PAYG-ключ)", "26. no-plan RU row")
+check(ProviderState.noPlan.isCheckFailure, "26. no-plan IS a --check failure")
+
+// -- 27. Presets: siliconflow + novita over the generic engine -----------------------------
+
+let sfSampleData = loadFixture("fixtures/siliconflow_user_info_sample.json")
+let novitaSampleData = loadFixture("fixtures/novita_balance_sample.json")
+
+if case .entries(let sfEntries) = GenericAdapter.parse(data: sfSampleData, httpStatus: 200, provider: sfProvider),
+   sfEntries.count == 1 {
+    eq(sfEntries[0].balanceText, "$23.50", "27. siliconflow totalBalance string → $23.50")
+    eq(sfEntries[0].level, Level.green, "27. green at default thresholds")
+} else {
+    check(false, "27. siliconflow sample → one balance entry")
+}
+let novitaCfgJSON = #"{"version":1,"providers":[{"id":"novita","name":"Novita","label":"Nv","kind":"novita","key":{"env":"NOVITA_API_KEY"}}]}"#
+guard case .parsed(let novitaConfig) = ProvidersConfigParser.parse(data: Data(novitaCfgJSON.utf8)),
+      novitaConfig.providers.count == 1 else {
+    print("FATAL: novita test config did not parse")
+    exit(1)
+}
+if case .entries(let nvEntries) = GenericAdapter.parse(data: novitaSampleData, httpStatus: 200, provider: novitaConfig.providers[0]),
+   nvEntries.count == 1 {
+    eq(nvEntries[0].balanceText, "$123.45", "27. novita availableBalance × 0.0001 → $123.45")
+} else {
+    check(false, "27. novita sample → one balance entry")
+}
+eq(ConfigRequestBuilder.primary(for: novitaConfig.providers[0], key: "K1")?.url,
+   "https://api.novita.ai/openapi/v1/billing/balance/detail", "27. novita preset URL")
+eq(ConfigRequestBuilder.primary(for: glmProvider, key: "K1")?.headers["Authorization"], "K1",
+   "27. zhipu raw-key Authorization header (no Bearer)")
+eq(ConfigRequestBuilder.primary(for: moonConfig.providers[1], key: "K1")?.url,
+   "https://api.moonshot.cn/v1/users/me/balance", "27. moonshot cn host URL")
+eq(ConfigRequestBuilder.substitute("Bearer ${KEY}", key: "K1"), "Bearer K1", "27. ${KEY} substitution")
+eq(ConfigRequestBuilder.redactedDisplayURL("https://api.example.com/v1/balance?api_key=sk-literal&x=1"),
+   "https://api.example.com/v1/balance?…",
+   "27. display URL: query (may hardcode a literal key) collapsed to ?…")
+eq(ConfigRequestBuilder.redactedDisplayURL("https://api.example.com/v1/balance"),
+   "https://api.example.com/v1/balance", "27. display URL without query unchanged")
+
+// generic display-mode resolution: percentUsed → percent-mode; balance+limit → percent-mode
+let pctCfgJSON = #"{"version":1,"providers":[{"id":"pct","name":"Pct","label":"Pc","kind":"generic-http","key":{"env":"E"},"request":{"url":"https://example.com/u"},"extract":{"percentUsed":{"path":"used_percent"},"okFlag":{"path":"ok"}}},{"id":"ratio","name":"Ratio","label":"Ra","kind":"generic-http","key":{"env":"E"},"request":{"url":"https://example.com/u"},"extract":{"balance":{"path":"b"},"limit":{"path":"l"}}}]}"#
+guard case .parsed(let genericConfig) = ProvidersConfigParser.parse(data: Data(pctCfgJSON.utf8)),
+      genericConfig.providers.count == 2 else {
+    print("FATAL: generic percent test config did not parse")
+    exit(1)
+}
+if case .entries(let pctEntries) = GenericAdapter.parse(data: Data(#"{"used_percent":37.4,"ok":true}"#.utf8),
+                                                        httpStatus: 200, provider: genericConfig.providers[0]),
+   pctEntries.count == 1 {
+    eq(pctEntries[0].percent, 37, "27. percentUsed path → percent-mode 37")
+    eq(TitleFormatter.segments(for: pctEntries).map(\.text), ["●37%"],
+       "27. config percent segment has no window label (●37%)")
+    eq(pctEntries[0].level, Level.green, "27. percent-mode uses standard levels")
+} else {
+    check(false, "27. generic percentUsed → one percent entry")
+}
+if case .entries(let flaggedEntries) = GenericAdapter.parse(data: Data(#"{"used_percent":10,"ok":false}"#.utf8),
+                                                            httpStatus: 200, provider: genericConfig.providers[0]),
+   flaggedEntries.count == 1 {
+    check(flaggedEntries[0].level == .red && flaggedEntries[0].isExhausted,
+          "27. okFlag=false in percent-mode → red + exhausted")
+} else {
+    check(false, "27. generic percentUsed with okFlag=false parses")
+}
+if case .entries(let ratioEntries) = GenericAdapter.parse(data: Data(#"{"b":30,"l":120}"#.utf8),
+                                                          httpStatus: 200, provider: genericConfig.providers[1]),
+   ratioEntries.count == 1 {
+    eq(ratioEntries[0].percent, 75, "27. balance+limit → used% = round(100·(120−30)/120) = 75")
+    eq(ratioEntries[0].level, Level.orange, "27. derived percent maps to standard levels")
+    eq(ratioEntries[0].balanceText, nil, "27. balance+limit renders as percent, not balance")
+} else {
+    check(false, "27. generic balance+limit → one percent entry")
+}
+if case .entries(let bareBalance) = GenericAdapter.parse(data: Data(#"{"b":30}"#.utf8),
+                                                         httpStatus: 200, provider: genericConfig.providers[1]),
+   bareBalance.count == 1 {
+    eq(bareBalance[0].balanceText, "$30.00", "27. limit missing at runtime → balance-mode fallback")
+} else {
+    check(false, "27. generic balance without limit → balance entry")
+}
+eq(GenericAdapter.parse(data: Data("{}".utf8), httpStatus: 200, provider: genericConfig.providers[1]),
+   AdapterResult.state(.parseError("нет поля b")), "27. missing required path → parse-error state")
+check(ProviderState.parseError("x").isCheckFailure && ProviderState.fetchError("x").isCheckFailure,
+      "27. fetch/parse errors ARE --check failures")
+
+// -- 28. Balance formatting + balance-mode levels --------------------------------------------
+
+eq(BalanceFormat.text(Decimal(string: "23.45")!, currency: "USD"), "$23.45", "28. USD prefix")
+eq(BalanceFormat.text(0, currency: "CNY"), "¥0.00", "28. CNY prefix, always 2 decimals")
+eq(BalanceFormat.text(Decimal(string: "12.5")!, currency: "EUR"), "€12.50", "28. EUR prefix")
+eq(BalanceFormat.text(Decimal(string: "23.45")!, currency: "XYZ"), "23.45 XYZ", "28. unknown code → suffix form")
+eq(BalanceFormat.text(Decimal(string: "1234.5")!, currency: "USD"), "$1.2k", "28. ≥ 1000 → $1.2k")
+eq(BalanceFormat.text(1000, currency: "USD"), "$1.0k", "28. exactly 1000 → $1.0k")
+eq(BalanceFormat.text(Decimal(string: "-2.31")!, currency: "USD"), "-$2.31", "28. negative -$2.31")
+eq(BalanceFormat.text(Decimal(string: "-1250")!, currency: "XYZ"), "-1.3k XYZ", "28. negative thousands, code suffix")
+let defaultThresholds = ProviderThresholds()
+let lvHigh = BalanceLevels.evaluate(remaining: 10, thresholds: defaultThresholds, okFlag: nil)
+check(lvHigh.level == .green && !lvHigh.exhausted, "28. > warn → green")
+let lvWarn = BalanceLevels.evaluate(remaining: 5, thresholds: defaultThresholds, okFlag: nil)
+check(lvWarn.level == .orange && !lvWarn.exhausted, "28. = warn → orange")
+let lvCrit = BalanceLevels.evaluate(remaining: 1, thresholds: defaultThresholds, okFlag: nil)
+check(lvCrit.level == .red && !lvCrit.exhausted, "28. = critical → red, not exhausted")
+let lvZero = BalanceLevels.evaluate(remaining: 0, thresholds: defaultThresholds, okFlag: nil)
+check(lvZero.level == .red && lvZero.exhausted, "28. ≤ 0 → red + exhausted")
+let lvNegative = BalanceLevels.evaluate(remaining: -3, thresholds: defaultThresholds, okFlag: nil)
+check(lvNegative.level == .red && lvNegative.exhausted, "28. negative → red + exhausted")
+let lvFlagged = BalanceLevels.evaluate(remaining: 100, thresholds: defaultThresholds, okFlag: false)
+check(lvFlagged.level == .red && lvFlagged.exhausted, "28. okFlag=false → red + exhausted at any amount")
+let lvOk = BalanceLevels.evaluate(remaining: 100, thresholds: defaultThresholds, okFlag: true)
+check(lvOk.level == .green && !lvOk.exhausted, "28. okFlag=true → normal thresholds")
+
+// -- 29. Balance-exhaustion notifications -----------------------------------------------------
+
+if case .entries(let exhaustedBalance) = DeepSeekAdapter.parse(data: dsUnavailableData, httpStatus: 200, provider: dsProvider) {
+    let planBalance = NotificationPlanner.plan(limits: exhaustedBalance, now: codexNow, alreadyNotified: [:])
+    eq(planBalance.scheduled.count, 0, "29. balance entries plan no reset notifications")
+    eq(planBalance.immediate.count, 1, "29. exhausted balance → one immediate notification")
+    if let item = planBalance.immediate.first {
+        eq(item.identifier, "exhausted|deepseek|custom||", "29. identifier exhausted|<id>|custom|| (empty stamp)")
+        eq(item.title, "DeepSeek: баланс исчерпан", "29. RU exhaustion title")
+        eq(item.body, "Осталось ¥0.00.", "29. RU body with the formatted remainder")
+        let planAgain = NotificationPlanner.plan(limits: exhaustedBalance, now: codexNow,
+                                                 alreadyNotified: [item.identifier: true])
+        eq(planAgain.immediate.count, 0, "29. already-notified balance exhaustion not re-planned")
+        check(planAgain.prunedNotified[item.identifier] == true,
+              "29. empty-stamp identifier kept while still exhausted")
+        if case .entries(let healthyBalance) = DeepSeekAdapter.parse(data: dsSampleData, httpStatus: 200, provider: dsProvider) {
+            let planRecovered = NotificationPlanner.plan(limits: healthyBalance, now: codexNow,
+                                                         alreadyNotified: [item.identifier: true])
+            check(planRecovered.prunedNotified[item.identifier] == nil,
+                  "29. empty-stamp identifier dropped after recovery")
+        } else {
+            check(false, "29. healthy deepseek entries for recovery step")
+        }
+    }
+} else {
+    check(false, "29. deepseek unavailable → entries for exhaustion planning")
+}
+eq(NotificationPlanner.normalizedResetStamp(Date(timeIntervalSince1970: 1_784_629_799.7)),
+   "2026-07-21T10:30:00+00:00", "29. epoch-ms jitter rounds to the minute (zhipu stamps)")
+
+// -- 30. Multi-provider title with config providers --------------------------------------------
+
+var orBalanceEntry: LimitEntry?
+if case .entries(let parsed) = OpenRouterAdapter.parseCredits(data: orCreditsData, httpStatus: 200, provider: orProvider) {
+    orBalanceEntry = parsed.first
+}
+if let orBalanceEntry {
+    let mixedGroups = [
+        ProviderGroup(provider: Provider.claude, limits: limits, stale: false),
+        ProviderGroup(provider: orProvider.id, limits: [orBalanceEntry], stale: false,
+                      titlePrefix: orProvider.titlePrefix),
+        ProviderGroup(provider: glmProvider.id, limits: glmEntries, stale: false,
+                      titlePrefix: glmProvider.titlePrefix),
+    ]
+    eq(TitleFormatter.plainTitle(groups: mixedGroups),
+       "Cl·5h●10% \u{2502} 7d●23% \u{2502} 7d●39% Fable"
+       + " \u{2016} " + "OR·●$74.75"
+       + " \u{2016} " + "GLM·5h●37% \u{2502} 7d●12%",
+       "30. Cl· ‖ OR· ‖ GLM· merged title with config label prefixes")
+    eq(TitleFormatter.plainTitle(groups: [
+        ProviderGroup(provider: orProvider.id, limits: [orBalanceEntry], stale: false,
+                      titlePrefix: orProvider.titlePrefix),
+    ]), "●$74.75", "30. single active config provider → no prefix")
+    check(TitleFormatter.plainTitle(groups: [
+        ProviderGroup(provider: Provider.claude, limits: limits, stale: false),
+        ProviderGroup(provider: glmProvider.id, limits: glmEntries, stale: true,
+                      titlePrefix: glmProvider.titlePrefix),
+    ]).contains(" \u{2016} ⚠GLM·"), "30. stale config provider gets ⚠ before its label prefix")
+} else {
+    check(false, "30. openrouter balance entry available for the title merge")
+}
 
 extension LimitEntry {
     func withPercent(_ p: Int) -> LimitEntry {

@@ -1,0 +1,5 @@
+{
+  "code": 1001,
+  "msg": "Authentication failed: token missing or invalid",
+  "success": false
+}

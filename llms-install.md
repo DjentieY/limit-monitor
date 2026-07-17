@@ -69,6 +69,13 @@ real end-to-end fetch against `api.anthropic.com` (and `chatgpt.com` /
 `cursor.com` when those providers are active) using the user's stored tokens.
 Never print or log token values.
 
+`--check` also covers custom providers configured in
+`~/.config/limit-monitor/providers.json` (balances/quotas — OpenRouter,
+DeepSeek, Kimi, GLM, etc.): a section per enabled entry that must fetch and
+parse for exit 0, with the key SOURCE shown (`env NAME` / `command` /
+`literal`) but never key values. A missing config file prints
+`custom: нет ~/.config/limit-monitor/providers.json` and is NOT a failure.
+
 Also confirm the process is running: `pgrep -f "Limit Monitor.app"`.
 
 ## Tell the user after installing
