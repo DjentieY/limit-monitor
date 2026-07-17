@@ -40,3 +40,37 @@ jobs:
       - name: Verify bundle signature
         working-directory: macos
         run: codesign --verify --deep --strict --verbose=2 "build/Limit Monitor.app"
+
+  go-core:
+    name: Go core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: go vet
+        working-directory: go
+        run: go vet ./...
+
+      - name: go test
+        working-directory: go
+        run: go test ./...
+
+      - name: Cross-compile (all targets, CGO_ENABLED=0)
+        working-directory: go
+        run: |
+          set -euo pipefail
+          for GOOS in linux windows darwin; do
+            for GOARCH in amd64 arm64; do
+              echo "==> $GOOS/$GOARCH"
+              CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build ./...
+            done
+          done
