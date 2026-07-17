@@ -156,8 +156,9 @@ public enum StateStr {
 }
 
 /// providers.json diagnostics (`ProvidersConfig`). `entryError` mirrors a config
-/// entry's `menuRow`; the parse `reason` inside it is not yet keyed (deferred,
-/// design R5).
+/// entry's `menuRow`; the parse `reason` inside it is now keyed via
+/// `ConfigReason` (SPEC v0.7), so a malformed config renders wholly in the
+/// resolved language.
 public enum ConfigStr {
     case missingCheck
     case malformed
@@ -179,6 +180,49 @@ public enum ConfigStr {
         case (.ru, .permissive):         return "providers.json доступен другим (chmod 600)"
         case let (.en, .entryError(n, r)): return "\(n): config error — \(r)"
         case let (.ru, .entryError(n, r)): return "\(n): ошибка конфига — \(r)"
+        }
+    }
+}
+
+/// Keyed providers.json per-entry parse reasons (SPEC v0.7). Stored inside
+/// `ConfigEntryError` and rendered through the `ConfigStr.entryError` frame in
+/// the resolved language — this closes the v0.6 mixed EN/RU config path so
+/// `--check` is 0-Cyrillic on EVERY path. RU arms are byte-identical to the
+/// pre-v0.7 hardcoded strings.
+public enum ConfigReason: Equatable {
+    case notObject
+    case invalidID
+    case reservedID
+    case duplicateID
+    case unknownKind(String)
+    case keyNeedsExactlyOne
+    case invalidHost
+    case requestURLMissing
+    case requestMethodGETOnly
+    case extractNeedsBalanceOrPercent
+
+    public func text(_ lang: Language) -> String {
+        switch (lang, self) {
+        case (.en, .notObject):        return "entry is not an object"
+        case (.ru, .notObject):        return "запись не объект"
+        case (.en, .invalidID):        return "invalid id (need slug [a-z0-9-], no |)"
+        case (.ru, .invalidID):        return "недопустимый id (нужен слаг [a-z0-9-], без |)"
+        case (.en, .reservedID):       return "id is reserved"
+        case (.ru, .reservedID):       return "id зарезервирован"
+        case (.en, .duplicateID):      return "duplicate id"
+        case (.ru, .duplicateID):      return "дублирующийся id"
+        case let (.en, .unknownKind(k)): return "unknown kind: \(k)"
+        case let (.ru, .unknownKind(k)): return "неизвестный kind: \(k)"
+        case (.en, .keyNeedsExactlyOne): return "key: need exactly one of literal/env/command"
+        case (.ru, .keyNeedsExactlyOne): return "key: нужен ровно один из literal/env/command"
+        case (.en, .invalidHost):      return "host: intl or cn"
+        case (.ru, .invalidHost):      return "host: intl или cn"
+        case (.en, .requestURLMissing): return "request.url missing"
+        case (.ru, .requestURLMissing): return "request.url отсутствует"
+        case (.en, .requestMethodGETOnly): return "request.method: GET only"
+        case (.ru, .requestMethodGETOnly): return "request.method: только GET"
+        case (.en, .extractNeedsBalanceOrPercent): return "extract: need balance or percentUsed"
+        case (.ru, .extractNeedsBalanceOrPercent): return "extract: нужен balance или percentUsed"
         }
     }
 }
@@ -232,6 +276,12 @@ public enum ChromeStr {
     case settingsTitle
     case providersSection
     case generalSection
+    /// Separators section (SPEC v0.7): section header, the two field labels and
+    /// the reset button. The separator glyphs themselves are neutral (never here).
+    case separatorsSection
+    case betweenProviders
+    case betweenLimits
+    case separatorsReset
     case showInFinder
     case disabledInConfigTooltip
     case loginUnavailableTooltip
@@ -265,6 +315,14 @@ public enum ChromeStr {
         case (.ru, .providersSection):        return "Провайдеры"
         case (.en, .generalSection):          return "General"
         case (.ru, .generalSection):          return "Общие"
+        case (.en, .separatorsSection):       return "Separators"
+        case (.ru, .separatorsSection):       return "Разделители"
+        case (.en, .betweenProviders):        return "Between providers"
+        case (.ru, .betweenProviders):        return "Между провайдерами"
+        case (.en, .betweenLimits):           return "Between limits"
+        case (.ru, .betweenLimits):           return "Между лимитами"
+        case (.en, .separatorsReset):         return "Reset"
+        case (.ru, .separatorsReset):         return "Сбросить"
         case (.en, .showInFinder):            return "Show in Finder"
         case (.ru, .showInFinder):            return "Показать в Finder"
         case (.en, .disabledInConfigTooltip): return "disabled in providers.json"

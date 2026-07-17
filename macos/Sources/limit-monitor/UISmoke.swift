@@ -23,7 +23,9 @@ enum UISmoke {
             notifyOn: true,
             loginOn: false,
             loginAvailable: false,
-            desktopCardOn: true
+            desktopCardOn: true,
+            providerSeparator: TitleFormatter.defaultProviderSeparator,
+            segmentSeparator: TitleFormatter.defaultSegmentSeparator
         )
         let controller = SettingsWindowController(
             modelProvider: { model }, handlers: SettingsWindowController.Handlers()

@@ -32,7 +32,7 @@ open "$HOME/Applications/$APP_NAME"
 cat <<'EOF'
 
 Done. Look at your menu bar: 5h●42% │ 7d●29% │ ...
-(with Codex/Cursor logged in too: Cl·5h●42% │ 7d●29% ‖ Cx·5h●12% ‖ Cu·Auto●2% │ API●6%)
+(with Codex/Cursor logged in too: Cl·5h●42% │ 7d●29% ┃ Cx·5h●12% ┃ Cu·Auto●2% │ API●6%)
 Next steps:
   1. Click "Allow" on the notification permission prompt.
   2. Enable autostart via the app menu («Запускать при входе»).

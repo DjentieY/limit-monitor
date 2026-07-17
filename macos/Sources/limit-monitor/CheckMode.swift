@@ -112,7 +112,7 @@ enum CheckMode {
             }
             var failed = false
             for error in config.errors {
-                print("ERROR: \(ConfigStr.entryError(name: error.name, reason: error.reason).text(lang))")
+                print("ERROR: \(error.menuRow(lang))")
                 failed = true
             }
             if config.providers.isEmpty, config.errors.isEmpty {

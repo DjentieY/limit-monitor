@@ -243,6 +243,10 @@ mentioned stays as specified above.
 - **Segment separator** (supersedes v0.1 `·` and the ` || ` interim): segments
   within a provider are joined by ` │ ` (U+2502), `TitleFormatter.separator`.
   Provider groups are joined by ` ‖ ` (U+2016), `TitleFormatter.providerSeparator`.
+  **SUPERSEDED by v0.7**: the constants are renamed
+  `defaultSegmentSeparator`/`defaultProviderSeparator`, the provider-group
+  default changes to ` ┃ ` (U+2503), and both are user-configurable — see
+  "v0.7 — Configurable bar separators".
 - Title (status item): with ONE active provider — single-provider format, no
   prefix, e.g. `5h●45% │ 7d●30% │ 7d●52% Fable`. With >1 active: provider groups
   joined by ` ‖ `, each group prefixed `Cl·` / `Cx·` / `Cu·`, e.g.
@@ -919,3 +923,76 @@ is live re-render of the status item/menu/card and re-texting already-scheduled
   `label` field is gone; do not grep display strings.
 - Update the v0.5 snapshot JSON example above to schema v2 (no `label`; add
   `scopeName`, `windowMinutes`).
+
+---
+
+# v0.7 — Configurable bar separators + localized config reasons (2026-07-17)
+
+Two small UX items plus a loose end from v0.6.
+
+## Default provider separator changes (supersedes v0.2)
+
+- Between-provider separator default changes from ` ‖ ` (U+2016) to **` ┃ `**
+  (U+2503 box-drawings heavy vertical). This gives a clear thin/heavy hierarchy
+  with the unchanged within-provider ` │ ` (U+2502): thin inside a provider,
+  heavy between providers. Example bar:
+  `Cl·5h●42% │ 7d●29% ┃ Cx·5h●12% │ 7d●40% ┃ Cu·Auto●2% │ API●6%`.
+
+## Configurable separators (Settings)
+
+- Two separators are user-configurable and persisted in `UserDefaults`:
+  - `barSegmentSeparator` — between limits of one provider (default ` │ `).
+  - `barProviderSeparator` — between provider groups (default ` ┃ `).
+  The stored value is the FULL joiner string **including its surrounding
+  spacing**, so the user controls padding (e.g. ` • ` vs `•` vs ` / `). Trim
+  trailing newlines; an empty/whitespace-only value falls back to the default;
+  cap at 8 characters (longer → truncated). These are **language-neutral** (the
+  i18n neutral list) — a separator is not translated.
+- `TitleFormatter.plainTitle`/`attributedTitle` and `segments`-joining gain
+  `segmentSeparator:`/`providerSeparator:` parameters defaulting to the
+  `TitleFormatter.defaultSegmentSeparator`/`defaultProviderSeparator` constants
+  (Core stays pure — it does NOT read `UserDefaults`). The shell resolves the
+  effective separators once per title build and passes them to BOTH the plain
+  path and the attributed-title builder (`App.swift` — the two `append(...
+  separator)` sites).
+- **Settings window** gains a section `Разделители` / `Separators` (localized
+  via `ChromeStr`, above the config-path hint or as its own block):
+  - two single-line `NSTextField`s: `Между провайдерами` / `Between providers`
+    and `Между лимитами` / `Between limits`, pre-filled with the current values;
+  - a small live **preview** label rendering a two-provider example title with
+    the current field values (so the effect is visible before applying);
+  - a `Сбросить` / `Reset` button restoring both defaults.
+  - Apply semantics: on end-of-editing (focus loss or Enter) validate → persist
+    → rebuild the status-item title immediately (same live-apply path as the
+    provider checkboxes). Reset updates the fields + title at once.
+- `--check`/`--status`/snapshot are unaffected (separators are a bar-only
+  concern; `--check` still uses its own plain formatting).
+
+## Localize `providers.json` parse reasons (closes the v0.6 roast finding)
+
+- The config-entry parse reasons in `ProvidersConfig.swift` (~12 strings:
+  invalid/reserved/duplicate id, unknown kind, entry-not-object, zero-or-two key
+  sources, bad thresholds/pollSeconds, etc.) are currently hardcoded Russian and
+  surface through the EN `ConfigStr.entryError` frame → mixed EN/RU on a
+  malformed config. Move them into a keyed `ConfigReason` enum (or `ConfigStr`
+  cases) with EN+RU arms so the reason is produced in the resolved language.
+  After this, the "`--check` is 0-Cyrillic" invariant holds on ALL paths, not
+  just the happy path. Preserve the exact existing RU wording as the RU arm.
+
+## `checks` additions
+
+- `TitleFormatter` default provider separator is ` ┃ ` (update the existing
+  multi-provider title asserts from ` ‖ ` to ` ┃ `).
+- Custom separators: given custom `segmentSeparator`/`providerSeparator`, the
+  plain title joins with them exactly; empty/whitespace → default; >8 chars →
+  truncated.
+- Config reasons localized: a representative malformed-entry reason renders in
+  both EN and RU (RU byte-identical to the pre-v0.7 string).
+
+## Docs
+
+- **README**: move the `## Install (macOS)` section UP — directly after the
+  intro/description block, BEFORE `## Features` (owner request). Update every
+  bar example that shows ` ‖ ` to ` ┃ `. Add a one-line note under Features (or
+  Settings) that the separators are configurable in Settings.
+- SPEC v0.2 separator definition is superseded by this section (note it).

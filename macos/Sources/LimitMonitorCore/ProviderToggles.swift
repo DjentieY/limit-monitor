@@ -1,9 +1,9 @@
 import Foundation
 
 /// SPEC v0.5 settings checkboxes: the persisted disable list
-/// (UserDefaults `disabledProviders`, built-ins by id, custom by config id).
-/// Core owns the pure model — filtering and toggle effects; persistence and
-/// the window itself live in the shell.
+/// (the shell's `disabledProviders` defaults key, built-ins by id, custom by
+/// config id). Core owns the pure model — filtering and toggle effects;
+/// persistence and the window itself live in the shell.
 public enum ProviderFilter {
     /// Groups without the disabled providers — feeds title segments, the menu
     /// model and the snapshot builder.

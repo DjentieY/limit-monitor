@@ -9,6 +9,14 @@ let isRunningInBundle = Bundle.main.bundlePath.hasSuffix(".app")
 // Russian. Immutable, resolved once — the shell's single localized value.
 let appLanguage = Language.resolve()
 
+// SPEC v0.7: user-configurable bar separators, persisted as the FULL joiner
+// string (incl. spacing). The shell owns these UserDefaults keys — Core stays
+// pure and only normalizes the raw value the shell hands it.
+enum BarSeparatorDefaults {
+    static let segmentKey = "barSegmentSeparator"
+    static let providerKey = "barProviderSeparator"
+}
+
 func runApp() {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
@@ -191,9 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .loaded(let config, _, let permissive):
             if permissive { rows.append(ConfigStr.permissive.text(appLanguage)) }
             runtimes.append(contentsOf: config.providers.map { ProviderRuntime(custom: $0) })
-            rows.append(contentsOf: config.errors.map {
-                ConfigStr.entryError(name: $0.name, reason: $0.reason).text(appLanguage)
-            })
+            rows.append(contentsOf: config.errors.map { $0.menuRow(appLanguage) })
             disabledNames = config.disabledEntries.map(\.name)
         }
         providers = runtimes
@@ -391,8 +397,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         enabledRuntimes().filter(\.active)
     }
 
+    /// SPEC v0.7: read the two `UserDefaults` separator overrides and normalize
+    /// them once per title build (Core stays pure — the shell resolves and
+    /// passes them in). Empty/whitespace → default; >8 chars → truncated;
+    /// trailing newlines trimmed. A change here rebuilds the title live.
+    private func resolvedSeparators() -> (segment: String, provider: String) {
+        let defaults = UserDefaults.standard
+        return (
+            segment: TitleFormatter.normalizedSeparator(
+                defaults.string(forKey: BarSeparatorDefaults.segmentKey),
+                default: TitleFormatter.defaultSegmentSeparator
+            ),
+            provider: TitleFormatter.normalizedSeparator(
+                defaults.string(forKey: BarSeparatorDefaults.providerKey),
+                default: TitleFormatter.defaultProviderSeparator
+            )
+        )
+    }
+
     private func updateTitle() {
         guard let button = statusItem?.button else { return }
+        let separators = resolvedSeparators()
         let title = NSMutableAttributedString()
         func append(_ string: String, color: NSColor? = nil) {
             var attributes: [NSAttributedString.Key: Any] = [.font: titleFont]
@@ -401,7 +426,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         func appendSegments(_ limits: [LimitEntry]) {
             for (index, segment) in TitleFormatter.segments(for: limits).enumerated() {
-                if index > 0 { append(TitleFormatter.separator) }
+                if index > 0 { append(separators.segment) }
                 if segment.dotless {
                     append(segment.text, color: color(for: segment.level))
                 } else {
@@ -423,7 +448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if provider.limits.isEmpty { append("…") } else { appendSegments(provider.limits) }
         } else {
             for (index, provider) in active.enumerated() {
-                if index > 0 { append(TitleFormatter.providerSeparator) }
+                if index > 0 { append(separators.provider) }
                 if provider.isStale { append("⚠") }
                 append(provider.barPrefix)
                 if provider.limits.isEmpty { append("…") } else { appendSegments(provider.limits) }
@@ -649,7 +674,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 modelProvider: { [weak self] in
                     self?.settingsModel() ?? SettingsWindowController.Model(
                         providers: [], configPath: ProvidersConfigFile.path(), configExists: false,
-                        notifyOn: true, loginOn: false, loginAvailable: false, desktopCardOn: false
+                        notifyOn: true, loginOn: false, loginAvailable: false, desktopCardOn: false,
+                        providerSeparator: TitleFormatter.defaultProviderSeparator,
+                        segmentSeparator: TitleFormatter.defaultSegmentSeparator
                     )
                 },
                 handlers: SettingsWindowController.Handlers(
@@ -659,6 +686,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     notifyToggled: { [weak self] on in self?.setNotify(on) },
                     loginToggled: { [weak self] on in self?.setLoginItem(on) },
                     desktopCardToggled: { [weak self] on in self?.setDesktopCard(on) },
+                    separatorsChanged: { [weak self] providerSep, segmentSep in
+                        self?.setSeparators(providerSeparator: providerSep, segmentSeparator: segmentSep)
+                    },
+                    separatorsReset: { [weak self] in self?.resetSeparators() },
                     revealConfig: {
                         NSWorkspace.shared.activateFileViewerSelecting(
                             [URL(fileURLWithPath: ProvidersConfigFile.path())]
@@ -689,6 +720,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
         let configPath = ProvidersConfigFile.path()
         let defaults = UserDefaults.standard
+        let separators = resolvedSeparators()
         return SettingsWindowController.Model(
             providers: rows,
             configPath: configPath,
@@ -696,8 +728,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notifyOn: defaults.bool(forKey: "notifyOnReset"),
             loginOn: isRunningInBundle && SMAppService.mainApp.status == .enabled,
             loginAvailable: isRunningInBundle,
-            desktopCardOn: defaults.bool(forKey: DesktopCard.defaultsKey)
+            desktopCardOn: defaults.bool(forKey: DesktopCard.defaultsKey),
+            providerSeparator: separators.provider,
+            segmentSeparator: separators.segment
         )
+    }
+
+    /// SPEC v0.7: end-of-editing in the Separators section persists the FULL
+    /// raw joiner strings (spacing included) and rebuilds the title live — the
+    /// same live-apply path the provider checkboxes use. Normalization
+    /// (trim/empty→default/cap-8) happens at resolve time, so persisting raw is
+    /// safe and the fields keep exactly what the user typed.
+    private func setSeparators(providerSeparator: String, segmentSeparator: String) {
+        let defaults = UserDefaults.standard
+        defaults.set(providerSeparator, forKey: BarSeparatorDefaults.providerKey)
+        defaults.set(segmentSeparator, forKey: BarSeparatorDefaults.segmentKey)
+        updateTitle()
+    }
+
+    /// Reset restores both defaults (drops the overrides) and rebuilds the title;
+    /// the settings controller repopulates its fields with the default glyphs.
+    private func resetSeparators() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: BarSeparatorDefaults.providerKey)
+        defaults.removeObject(forKey: BarSeparatorDefaults.segmentKey)
+        updateTitle()
     }
 
     /// A checkbox flip applies IMMEDIATELY (SPEC v0.5): polling stops/starts,
