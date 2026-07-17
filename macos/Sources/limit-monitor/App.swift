@@ -149,8 +149,10 @@ enum CursorPoller {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
-    private var timers: [Timer] = []
+    private var timersByProvider: [String: Timer] = [:]
     private let notifier = Notifier()
+    private let desktopCard = DesktopCard()
+    private var settings: SettingsWindowController?
     private let pollQueue = DispatchQueue(
         label: "com.vladlaiho.limit-monitor.poll", attributes: .concurrent
     )
@@ -162,6 +164,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Static disabled menu rows from providers.json: file parse/version error,
     /// chmod warning, per-entry config errors. Built once at launch.
     private let configRows: [String]
+    /// `enabled: false` providers.json entries — listed in the settings window
+    /// unchecked-and-disabled (v0.5), invisible everywhere else.
+    private let configDisabledNames: [String]
 
     override init() {
         var runtimes = [
@@ -170,6 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ProviderRuntime(id: Provider.cursor, pollInterval: 300, fetch: CursorPoller.poll),
         ]
         var rows: [String] = []
+        var disabledNames: [String] = []
         switch ProvidersConfigLoader.load() {
         case .missing:
             break
@@ -181,9 +187,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if permissive { rows.append(ProvidersConfigFile.permissiveMenuRow) }
             runtimes.append(contentsOf: config.providers.map { ProviderRuntime(custom: $0) })
             rows.append(contentsOf: config.errors.map(\.menuRow))
+            disabledNames = config.disabledEntries.map(\.name)
         }
         providers = runtimes
         configRows = rows
+        configDisabledNames = disabledNames
         super.init()
     }
 
@@ -191,7 +199,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuFont = NSFont.menuFont(ofSize: 0)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        UserDefaults.standard.register(defaults: ["notifyOnReset": true])
+        UserDefaults.standard.register(defaults: [
+            "notifyOnReset": true,
+            DesktopCard.defaultsKey: false,
+        ])
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "…"
         statusItem = item
@@ -202,21 +213,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWorkspace.didWakeNotification,
             object: nil
         )
-        startTimers()
+        syncTimers()
         refreshUI()
         pollAll()
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
 
-    private func startTimers() {
+    /// One repeating timer per ENABLED provider; a settings checkbox flip
+    /// stops/starts polling immediately (SPEC v0.5).
+    private func syncTimers() {
+        let disabled = disabledProviders()
         for provider in providers {
-            let timer = Timer(timeInterval: provider.pollInterval, repeats: true) { [weak self] _ in
-                self?.poll(provider)
+            if disabled.contains(provider.id) {
+                timersByProvider.removeValue(forKey: provider.id)?.invalidate()
+            } else if timersByProvider[provider.id] == nil {
+                let timer = Timer(timeInterval: provider.pollInterval, repeats: true) { [weak self] _ in
+                    self?.poll(provider)
+                }
+                timer.tolerance = provider.pollInterval / 6
+                RunLoop.main.add(timer, forMode: .common)
+                timersByProvider[provider.id] = timer
             }
-            timer.tolerance = provider.pollInterval / 6
-            RunLoop.main.add(timer, forMode: .common)
-            timers.append(timer)
         }
     }
 
@@ -224,11 +242,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func refreshNow() { pollAll() }
 
     private func pollAll() {
-        for provider in providers { poll(provider) }
+        for provider in enabledRuntimes() { poll(provider) }
     }
 
     private func poll(_ provider: ProviderRuntime) {
-        if provider.polling { return }
+        if provider.polling || disabledProviders().contains(provider.id) { return }
         provider.polling = true
         pollQueue.async { [weak self] in
             let outcome = provider.fetch()
@@ -279,11 +297,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // launch poll must not wipe the previous session's pre-scheduled resets —
         // they have to fire even if the Mac is offline at the reset moment.
         if case .success = outcome { replanNotifications() }
+        writeSnapshot()
         refreshUI()
     }
 
+    private func disabledProviders() -> Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: ProviderSettings.disabledDefaultsKey) ?? [])
+    }
+
+    // SPEC v0.5: after every poll cycle the merged model lands atomically in
+    // ~/Library/Application Support/limit-monitor/widget-snapshot.json (numbers,
+    // labels, ISO UTC times — never credentials; disabled providers excluded).
+    private func writeSnapshot() {
+        let groups = providers.filter(\.active).map {
+            ProviderGroup(provider: $0.id, limits: $0.limits, stale: $0.isStale, titlePrefix: $0.barPrefix)
+        }
+        SnapshotStore.write(WidgetSnapshot.build(groups: groups, now: Date(), disabled: disabledProviders()))
+    }
+
     private func replanNotifications() {
-        let merged = providers.filter(\.active).flatMap(\.limits)
+        let disabled = disabledProviders()
+        let merged = ProviderFilter.limits(
+            providers.filter(\.active).flatMap(\.limits), disabled: disabled
+        )
         // A provider with no successful poll this session has an UNKNOWN desired
         // set: its pending requests and null-stamp exhausted keys are left alone
         // until it reports, so one provider's launch success cannot wipe another's.
@@ -303,7 +339,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notified[key] = value
         }
         if enabled {
-            notifier.reconcileScheduled(plan.scheduled, removalScope: reported, knownProviders: allIds)
+            notifier.reconcileScheduled(
+                plan.scheduled, removalScope: reported, knownProviders: allIds, disabled: disabled
+            )
             for item in plan.immediate {
                 notifier.deliverImmediate(item)
                 notified[item.identifier] = true
@@ -330,19 +368,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshUI() {
         updateTitle()
         rebuildMenu()
+        updateDesktopCard()
     }
 
     private func color(for level: Level) -> NSColor {
-        switch level {
-        case .green: return .systemGreen
-        case .yellow: return .systemYellow
-        case .orange: return .systemOrange
-        case .red: return .systemRed
-        }
+        UIStyle.color(for: level)
+    }
+
+    private func enabledRuntimes() -> [ProviderRuntime] {
+        let disabled = disabledProviders()
+        return providers.filter { !disabled.contains($0.id) }
     }
 
     private func activeProviders() -> [ProviderRuntime] {
-        providers.filter(\.active)
+        enabledRuntimes().filter(\.active)
     }
 
     private func updateTitle() {
@@ -366,7 +405,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         let active = activeProviders()
-        if active.isEmpty {
+        if enabledRuntimes().isEmpty {
+            // Every provider unchecked in the settings — static brand title,
+            // the menu (incl. Настройки…) stays reachable.
+            append("LM")
+        } else if active.isEmpty {
             append("⚠…")
         } else if active.count == 1, let provider = active.first {
             if provider.isStale { append("⚠") }
@@ -430,9 +473,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.autoenablesItems = false
         let now = Date()
         let multi = activeProviders().count > 1
+        let disabled = disabledProviders()
         var addedRows = false
 
         for provider in providers {
+            // Unchecked in the settings → no rows at all (SPEC v0.5).
+            guard !disabled.contains(provider.id) else { continue }
             guard provider.active else {
                 if let row = provider.inactiveMenuRow {
                     menu.addItem(disabledItem(row))
@@ -504,6 +550,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menu.addItem(login)
 
+        let card = NSMenuItem(title: "Виджет на рабочем столе", action: #selector(toggleDesktopCard), keyEquivalent: "")
+        card.target = self
+        card.isEnabled = true
+        card.state = UserDefaults.standard.bool(forKey: DesktopCard.defaultsKey) ? .on : .off
+        menu.addItem(card)
+
+        let settingsItem = NSMenuItem(title: "Настройки…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        settingsItem.isEnabled = true
+        menu.addItem(settingsItem)
+
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Выход", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.isEnabled = true
@@ -512,30 +569,146 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = menu
     }
 
+    // MARK: - Toggles (shared by the menu checkmarks and the settings window)
+
     @objc private func toggleNotify() {
-        let defaults = UserDefaults.standard
-        let enabled = !defaults.bool(forKey: "notifyOnReset")
-        defaults.set(enabled, forKey: "notifyOnReset")
+        setNotify(!UserDefaults.standard.bool(forKey: "notifyOnReset"))
+    }
+
+    private func setNotify(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: "notifyOnReset")
         if enabled {
             pollAll()
         } else {
             notifier.removeAllScheduledResets()
         }
         rebuildMenu()
+        settings?.refresh()
     }
 
     @objc private func toggleLoginItem() {
         guard isRunningInBundle else { return }
+        setLoginItem(SMAppService.mainApp.status != .enabled)
+    }
+
+    private func setLoginItem(_ enabled: Bool) {
+        guard isRunningInBundle else { return }
         let service = SMAppService.mainApp
         do {
-            if service.status == .enabled {
-                try service.unregister()
-            } else {
+            if enabled {
                 try service.register()
+            } else {
+                try service.unregister()
             }
         } catch {
             NSLog("SMAppService error: %@", error.localizedDescription)
         }
         rebuildMenu()
+        settings?.refresh()
+    }
+
+    @objc private func toggleDesktopCard() {
+        setDesktopCard(!UserDefaults.standard.bool(forKey: DesktopCard.defaultsKey))
+    }
+
+    private func setDesktopCard(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: DesktopCard.defaultsKey)
+        updateDesktopCard()
+        rebuildMenu()
+        settings?.refresh()
+    }
+
+    // MARK: - Desktop card (SPEC v0.5)
+
+    private func updateDesktopCard() {
+        let cardProviders = activeProviders()
+            .filter { !$0.limits.isEmpty }
+            .map { DesktopCard.ProviderModel(name: $0.displayName, stale: $0.isStale, limits: $0.limits) }
+        desktopCard.setVisible(
+            UserDefaults.standard.bool(forKey: DesktopCard.defaultsKey),
+            providers: cardProviders
+        )
+    }
+
+    // MARK: - Settings window (SPEC v0.5)
+
+    @objc private func openSettings() {
+        if settings == nil {
+            settings = SettingsWindowController(
+                modelProvider: { [weak self] in
+                    self?.settingsModel() ?? SettingsWindowController.Model(
+                        providers: [], configPath: ProvidersConfigFile.path(), configExists: false,
+                        notifyOn: true, loginOn: false, loginAvailable: false, desktopCardOn: false
+                    )
+                },
+                handlers: SettingsWindowController.Handlers(
+                    providerToggled: { [weak self] id, enabled in
+                        self?.setProviderEnabled(id, enabled: enabled)
+                    },
+                    notifyToggled: { [weak self] on in self?.setNotify(on) },
+                    loginToggled: { [weak self] on in self?.setLoginItem(on) },
+                    desktopCardToggled: { [weak self] on in self?.setDesktopCard(on) },
+                    revealConfig: {
+                        NSWorkspace.shared.activateFileViewerSelecting(
+                            [URL(fileURLWithPath: ProvidersConfigFile.path())]
+                        )
+                    }
+                )
+            )
+        }
+        settings?.show()
+    }
+
+    private func settingsModel() -> SettingsWindowController.Model {
+        let disabled = disabledProviders()
+        var rows: [SettingsWindowController.ProviderRow] = providers.map { runtime in
+            SettingsWindowController.ProviderRow(
+                id: runtime.id,
+                title: runtime.displayName,
+                checked: !disabled.contains(runtime.id),
+                enabled: true,
+                tooltip: nil
+            )
+        }
+        rows.append(contentsOf: configDisabledNames.map { name in
+            SettingsWindowController.ProviderRow(
+                id: nil, title: name, checked: false, enabled: false,
+                tooltip: "выключен в providers.json"
+            )
+        })
+        let configPath = ProvidersConfigFile.path()
+        let defaults = UserDefaults.standard
+        return SettingsWindowController.Model(
+            providers: rows,
+            configPath: configPath,
+            configExists: FileManager.default.fileExists(atPath: configPath),
+            notifyOn: defaults.bool(forKey: "notifyOnReset"),
+            loginOn: isRunningInBundle && SMAppService.mainApp.status == .enabled,
+            loginAvailable: isRunningInBundle,
+            desktopCardOn: defaults.bool(forKey: DesktopCard.defaultsKey)
+        )
+    }
+
+    /// A checkbox flip applies IMMEDIATELY (SPEC v0.5): polling stops/starts,
+    /// bar/menu/card/snapshot exclude the provider, its pending reset|<id>|*
+    /// requests are reconciled away right now; re-enabling polls it at once.
+    private func setProviderEnabled(_ id: String, enabled: Bool) {
+        let outcome = ProviderSettings.setEnabled(enabled, provider: id, disabled: disabledProviders())
+        UserDefaults.standard.set(
+            Array(outcome.disabled).sorted(), forKey: ProviderSettings.disabledDefaultsKey
+        )
+        syncTimers()
+        if outcome.reconcileNow {
+            // Explicit reconcile on disable — complements the
+            // replan-only-on-success rule; the disabled id is removable
+            // unconditionally (NotificationReconciler, check 33).
+            replanNotifications()
+        }
+        writeSnapshot()
+        refreshUI()
+        for pollID in outcome.immediatePoll {
+            if let runtime = providers.first(where: { $0.id == pollID }) { poll(runtime) }
+        }
+        settings?.refresh()
     }
 }

@@ -47,6 +47,13 @@ public enum TimeFormat {
         return "\(dayMonth) \(clockFormatter.string(from: date))"
     }
 
+    /// Bare short form for the desktop card's `до …` column — `absolute`
+    /// without the same-day `в` preposition: "12:30" / "пт 10:59" / "7 авг 08:27".
+    public static func compact(_ date: Date, now: Date = Date()) -> String {
+        let absolute = absolute(date, now: now)
+        return absolute.hasPrefix("в ") ? String(absolute.dropFirst(2)) : absolute
+    }
+
     public static func relative(_ date: Date, now: Date = Date()) -> String {
         let total = Int(date.timeIntervalSince(now).rounded())
         guard total > 0 else { return "сейчас" }

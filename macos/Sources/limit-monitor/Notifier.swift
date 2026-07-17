@@ -32,19 +32,28 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// requests of a provider removed/renamed/disabled in providers.json belong
     /// to no runtime, so they are purged outright (otherwise a deleted entry's
     /// reset notification could fire weeks later).
-    func reconcileScheduled(_ desired: [PlannedReset], removalScope: Set<String>, knownProviders: Set<String>) {
+    /// disabled: settings checkboxes (v0.5) — a disabled provider's pending
+    /// requests are removable immediately, desired set or not.
+    func reconcileScheduled(
+        _ desired: [PlannedReset],
+        removalScope: Set<String>,
+        knownProviders: Set<String>,
+        disabled: Set<String> = []
+    ) {
         guard ensureBundled() else { return }
         let desiredById = Dictionary(desired.map { ($0.identifier, $0) }, uniquingKeysWith: { a, _ in a })
         let center = UNUserNotificationCenter.current()
         center.getPendingNotificationRequests { pending in
             let existing = Set(pending.map(\.identifier).filter { $0.hasPrefix("reset|") })
-            let wanted = Set(desiredById.keys)
-            let stale = existing.subtracting(wanted).filter {
-                let provider = NotificationPlanner.identifierProvider($0)
-                return removalScope.contains(provider) || !knownProviders.contains(provider)
-            }
+            let stale = NotificationReconciler.removableResetIdentifiers(
+                pending: pending.map(\.identifier),
+                desired: Set(desiredById.keys),
+                removalScope: removalScope,
+                knownProviders: knownProviders,
+                disabled: disabled
+            )
             if !stale.isEmpty {
-                center.removePendingNotificationRequests(withIdentifiers: Array(stale))
+                center.removePendingNotificationRequests(withIdentifiers: stale)
             }
             for (identifier, item) in desiredById where !existing.contains(identifier) {
                 let content = UNMutableNotificationContent()

@@ -538,6 +538,8 @@ guard case .parsed(let providersConfig) = ProvidersConfigParser.parse(data: prov
 eq(providersConfig.providers.count, 5, "21. sample config → 5 enabled providers")
 eq(providersConfig.providers.map(\.id), ["openrouter", "deepseek", "glm", "sf", "hyper"],
    "21. file order kept, kimi (enabled:false) skipped entirely")
+eq(providersConfig.disabledEntries.map(\.name), ["Kimi"],
+   "21. enabled:false entry surfaces for the settings window (v0.5), runtime untouched")
 eq(providersConfig.errors.count, 0, "21. sample config has no entry errors")
 eq(providersConfig.providers.map(\.kind),
    [ConfigProviderKind.openrouter, .deepseek, .zhipu, .siliconflow, .genericHTTP],
@@ -971,6 +973,174 @@ if let orBalanceEntry {
 } else {
     check(false, "30. openrouter balance entry available for the title merge")
 }
+
+// -- 31. Widget snapshot builder (schema v1) ----------------------------------------------------
+
+let snapshotNow = ISODateParser.parse("2026-07-16T20:00:00.000000+00:00")!
+var dsExhaustedEntries: [LimitEntry] = []
+if case .entries(let parsed) = DeepSeekAdapter.parse(data: dsUnavailableData, httpStatus: 200, provider: dsProvider) {
+    dsExhaustedEntries = parsed
+}
+guard dsExhaustedEntries.count == 1 else {
+    print("FATAL: deepseek unavailable fixture did not yield the balance entry for snapshot checks")
+    exit(1)
+}
+let snapshotGroups = [
+    ProviderGroup(provider: Provider.claude, limits: limits, stale: false),
+    ProviderGroup(provider: dsProvider.id, limits: dsExhaustedEntries, stale: false,
+                  titlePrefix: dsProvider.titlePrefix),
+]
+let snapshot = WidgetSnapshot.build(groups: snapshotGroups, now: snapshotNow)
+eq(snapshot.version, 1, "31. schema version 1")
+eq(snapshot.generatedAt, "2026-07-16T20:00:00+00:00", "31. generatedAt ISO-8601 UTC")
+eq(snapshot.providers.map(\.id), ["claude", "deepseek"], "31. provider ids in display order")
+eq(snapshot.providers.map(\.name), ["Claude", "DeepSeek"], "31. provider names (config name for custom)")
+eq(snapshot.providers.map(\.label), ["Cl", "DS"], "31. bar labels without the trailing ·")
+eq(snapshot.providers.map(\.stale), [false, false], "31. per-provider stale flags")
+let snapshotClaudeRows = snapshot.providers[0].limits
+eq(snapshotClaudeRows.map(\.kind), ["session", "weekly_all", "weekly_scoped"], "31. claude row kinds")
+eq(snapshotClaudeRows[0].label, "5-часовой", "31. RU label on the row")
+eq(snapshotClaudeRows[0].windowLabel, "5h", "31. window label 5h")
+eq(snapshotClaudeRows[0].percent, 10, "31. percent field")
+eq(snapshotClaudeRows[0].text, "10%", "31. text field for percent rows")
+eq(snapshotClaudeRows[0].level, "green", "31. level string green")
+eq(snapshotClaudeRows[0].resetsAt, "2026-07-16T22:59:59+00:00",
+   "31. resetsAt ISO-8601 UTC, seconds precision (fraction dropped)")
+eq(snapshotClaudeRows[0].exhausted, false, "31. exhausted flag false")
+eq(snapshotClaudeRows[2].label, "Недельный · Fable", "31. scoped RU label carries the scope")
+eq(snapshotClaudeRows[2].text, "39%", "31. scoped text is the bare percent")
+let snapshotBalanceRow = snapshot.providers[1].limits[0]
+eq(snapshotBalanceRow.kind, "custom", "31. balance row kind custom")
+eq(snapshotBalanceRow.label, "DeepSeek", "31. balance row label = provider name")
+eq(snapshotBalanceRow.windowLabel, nil, "31. balance row has no windowLabel")
+eq(snapshotBalanceRow.percent, nil, "31. balance row has no percent")
+eq(snapshotBalanceRow.text, "¥0.00", "31. balance row text is the formatted remainder")
+eq(snapshotBalanceRow.level, "red", "31. exhausted balance level red")
+eq(snapshotBalanceRow.exhausted, true, "31. exhausted flag true")
+eq(snapshotBalanceRow.resetsAt, nil, "31. balance row has no resetsAt")
+let snapshotWithEmpty = snapshotGroups + [ProviderGroup(provider: Provider.codex, limits: [], stale: false)]
+eq(WidgetSnapshot.build(groups: snapshotWithEmpty, now: snapshotNow).providers.map(\.id),
+   ["claude", "deepseek"], "31. provider without data excluded from the snapshot")
+guard let snapshotData = snapshot.encode(),
+      let snapshotText = String(data: snapshotData, encoding: .utf8) else {
+    print("FATAL: snapshot did not encode")
+    exit(1)
+}
+check(snapshotText.contains("\"version\""), "31. encoded snapshot is schema-v1 JSON")
+check(!snapshotText.contains("sk-") && !snapshotText.contains("eyJ") && !snapshotText.contains("Bearer"),
+      "31. snapshot output contains no sk-/eyJ/Bearer substrings")
+
+// -- 32. Snapshot round-trip + staleness --------------------------------------------------------
+
+eq(WidgetSnapshot.parse(data: snapshotData), snapshot, "32. builder output parses back (round-trip)")
+check(WidgetSnapshot.parse(data: Data("not json".utf8)) == nil, "32. garbage snapshot → nil, no crash")
+check(WidgetSnapshot.parse(data: Data(#"{"version":2,"generatedAt":"x","providers":[]}"#.utf8)) == nil,
+      "32. unknown snapshot version rejected")
+check(!snapshot.isStale(now: snapshotNow.addingTimeInterval(14 * 60)),
+      "32. generatedAt 14 min old → fresh")
+check(snapshot.isStale(now: snapshotNow.addingTimeInterval(15 * 60 + 1)),
+      "32. generatedAt older than 15 min → stale")
+check(WidgetSnapshot(version: 1, generatedAt: "garbage", providers: []).isStale(now: snapshotNow),
+      "32. unparseable generatedAt → stale")
+
+// -- 33. disabledProviders filtering ------------------------------------------------------------
+
+let disabledSet: Set<String> = ["deepseek"]
+let filteredGroups = ProviderFilter.groups(snapshotGroups, disabled: disabledSet)
+eq(filteredGroups.map(\.provider), ["claude"], "33. disabled provider dropped from the groups")
+check(!TitleFormatter.plainTitle(groups: filteredGroups).contains("¥")
+      && !TitleFormatter.plainTitle(groups: filteredGroups).contains("DS·"),
+      "33. title segments exclude the disabled provider")
+let filteredMenuRows = filteredGroups.flatMap { group in
+    group.limits.map { MenuText.infoRow(for: $0, now: snapshotNow) }
+}
+check(filteredMenuRows.count == 3 && !filteredMenuRows.contains { $0.contains("DeepSeek") },
+      "33. menu model rows exclude the disabled provider")
+let filteredPlan = NotificationPlanner.plan(
+    limits: ProviderFilter.limits(limits + dsExhaustedEntries, disabled: disabledSet),
+    now: snapshotNow,
+    alreadyNotified: [:]
+)
+check(!filteredPlan.scheduled.contains { $0.identifier.contains("|deepseek|") },
+      "33. notification desired-set excludes the disabled provider")
+eq(filteredPlan.immediate.count, 0, "33. exhausted balance of a disabled provider not notified")
+eq(WidgetSnapshot.build(groups: snapshotGroups, now: snapshotNow, disabled: disabledSet).providers.map(\.id),
+   ["claude"], "33. snapshot excludes the disabled provider")
+let pendingIdentifiers = [
+    "reset|deepseek|custom||2026-07-18T08:00:00+00:00",
+    "reset|claude|session||2026-07-16T23:00:00+00:00",
+    "exhausted|deepseek|custom||",
+]
+eq(NotificationReconciler.removableResetIdentifiers(
+    pending: pendingIdentifiers,
+    desired: ["reset|claude|session||2026-07-16T23:00:00+00:00"],
+    removalScope: ["claude"],
+    knownProviders: ["claude", "deepseek"],
+    disabled: disabledSet
+), ["reset|deepseek|custom||2026-07-18T08:00:00+00:00"],
+   "33. pending reset|<id>|* of a disabled provider removable in the reconcile plan")
+eq(NotificationReconciler.removableResetIdentifiers(
+    pending: pendingIdentifiers,
+    desired: ["reset|claude|session||2026-07-16T23:00:00+00:00"],
+    removalScope: ["claude"],
+    knownProviders: ["claude", "deepseek"],
+    disabled: []
+), [], "33. same pending kept while the provider is enabled but unreported")
+
+// -- 34. Settings toggle model (immediate poll on re-enable) ------------------------------------
+
+let reEnableOutcome = ProviderSettings.setEnabled(true, provider: "codex", disabled: ["codex", "deepseek"])
+eq(reEnableOutcome.disabled, Set(["deepseek"]), "34. re-enabling removes the id from disabledProviders")
+eq(reEnableOutcome.immediatePoll, ["codex"],
+   "34. toggle off → on yields an immediate poll of exactly that provider")
+eq(reEnableOutcome.reconcileNow, false, "34. re-enabling needs no immediate reconcile")
+let disableOutcome = ProviderSettings.setEnabled(false, provider: "cursor", disabled: ["deepseek"])
+eq(disableOutcome.disabled, Set(["deepseek", "cursor"]), "34. disabling adds the id")
+eq(disableOutcome.immediatePoll, [], "34. disabling polls nothing")
+eq(disableOutcome.reconcileNow, true, "34. disabling requests an immediate notification reconcile")
+let noopOutcome = ProviderSettings.setEnabled(true, provider: "claude", disabled: ["deepseek"])
+eq(noopOutcome.immediatePoll, [], "34. enabling an already-enabled provider polls nothing")
+eq(noopOutcome.disabled, Set(["deepseek"]), "34. no-op toggle keeps the set")
+eq(ProviderSettings.disabledDefaultsKey, "disabledProviders", "34. UserDefaults key per SPEC")
+
+// -- 35. --status rendering ----------------------------------------------------------------------
+
+let statusFixtureData = loadFixture("fixtures/widget_snapshot_sample.json")
+guard let statusSnapshot = WidgetSnapshot.parse(data: statusFixtureData) else {
+    print("FATAL: widget_snapshot_sample.json did not parse")
+    exit(1)
+}
+let statusFreshNow = ISODateParser.parse("2026-07-17T08:05:00+00:00")!
+let statusStaleNow = ISODateParser.parse("2026-07-17T08:30:00+00:00")!
+let staleTable = StatusCommand.render(snapshot: statusSnapshot, now: statusStaleNow)
+check(staleTable.hasPrefix("Обновлено: ") && staleTable.contains("(устарело)"),
+      "35. old generatedAt → header suffix (устарело)")
+check(!StatusCommand.render(snapshot: statusSnapshot, now: statusFreshNow).contains("(устарело)"),
+      "35. fresh generatedAt → no (устарело)")
+check(staleTable.contains("5-часовой") && staleTable.contains("Недельный (все модели)"),
+      "35. table contains RU labels")
+check(staleTable.contains("зелёный") && staleTable.contains("жёлтый") && staleTable.contains("красный"),
+      "35. table contains RU level words")
+check(staleTable.contains("9%") && staleTable.contains("¥0.00"),
+      "35. rows carry percent and balance values")
+check(staleTable.contains("исчерпан"), "35. exhausted row marked исчерпан")
+check(staleTable.contains("⚠ DeepSeek [DS]"), "35. stale provider header gets ⚠")
+check(staleTable.contains("Claude [Cl]") && !staleTable.contains("⚠ Claude"),
+      "35. fresh provider header has no ⚠")
+let statusHumanOut = StatusCommand.output(fileData: statusFixtureData, json: false, now: statusStaleNow)
+eq(statusHumanOut.exitCode, 0, "35. --status exit 0 with a snapshot present")
+eq(String(data: statusHumanOut.stdout, encoding: .utf8), staleTable + "\n",
+   "35. --status prints exactly the rendered table")
+let statusJSONOut = StatusCommand.output(fileData: statusFixtureData, json: true, now: statusStaleNow)
+eq(statusJSONOut.exitCode, 0, "35. --status --json exit 0")
+check(statusJSONOut.stdout == statusFixtureData, "35. --status --json byte-identical to the file")
+let statusMissingOut = StatusCommand.output(fileData: nil, json: false, now: statusStaleNow)
+eq(statusMissingOut.exitCode, 2, "35. missing snapshot → exit 2")
+eq(String(data: statusMissingOut.stdout, encoding: .utf8),
+   "снапшот недоступен — запусти Limit Monitor или limit-monitor --check\n",
+   "35. missing snapshot → RU hint line")
+eq(StatusCommand.output(fileData: Data("junk".utf8), json: true, now: statusStaleNow).exitCode, 2,
+   "35. unreadable snapshot → exit 2 in --json mode too")
 
 extension LimitEntry {
     func withPercent(_ p: Int) -> LimitEntry {

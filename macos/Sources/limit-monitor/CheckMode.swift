@@ -14,49 +14,52 @@ enum CheckMode {
     static func run() -> Int32 {
         print("limit-monitor --check (e2e smoke test)")
         let now = Date()
+        // v0.5 settings checkboxes: a disabled provider is skipped, NOT a failure.
+        let disabled = Set(
+            UserDefaults.standard.stringArray(forKey: ProviderSettings.disabledDefaultsKey) ?? []
+        )
         var failed = false
         var groups: [ProviderGroup] = []
 
-        print("")
-        print("== claude ==")
-        switch runClaude(now: now) {
-        case .success(let limits):
-            groups.append(ProviderGroup(provider: Provider.claude, limits: limits, stale: false))
-        case .inactive(let reason):
-            print("claude: неактивен (\(reason))")
-        case .failed:
-            failed = true
+        func runBuiltin(_ id: String, _ section: () -> SectionResult) {
+            print("")
+            print("== \(id) ==")
+            if disabled.contains(id) {
+                print("\(id): отключён в настройках")
+                return
+            }
+            switch section() {
+            case .success(let limits):
+                groups.append(ProviderGroup(provider: id, limits: limits, stale: false))
+            case .inactive(let reason):
+                print("\(id): неактивен (\(reason))")
+            case .failed:
+                failed = true
+            }
         }
 
-        print("")
-        print("== codex ==")
-        switch runCodex(now: now) {
-        case .success(let limits):
-            groups.append(ProviderGroup(provider: Provider.codex, limits: limits, stale: false))
-        case .inactive(let reason):
-            print("codex: неактивен (\(reason))")
-        case .failed:
-            failed = true
-        }
-
-        print("")
-        print("== cursor ==")
-        switch runCursor(now: now) {
-        case .success(let limits):
-            groups.append(ProviderGroup(provider: Provider.cursor, limits: limits, stale: false))
-        case .inactive(let reason):
-            print("cursor: неактивен (\(reason))")
-        case .failed:
-            failed = true
-        }
+        runBuiltin(Provider.claude) { runClaude(now: now) }
+        runBuiltin(Provider.codex) { runCodex(now: now) }
+        runBuiltin(Provider.cursor) { runCursor(now: now) }
 
         print("")
         print("== custom ==")
-        if runCustomProviders(now: now, groups: &groups) { failed = true }
+        if runCustomProviders(now: now, disabled: disabled, groups: &groups) { failed = true }
 
         print("")
         if !groups.isEmpty {
             print("merged title: \(TitleFormatter.plainTitle(groups: groups))")
+            print("")
+        }
+        // v0.5: a successful --check leaves a fresh widget snapshot behind, so
+        // agents can poll --status without the GUI (and without the network).
+        if !failed {
+            let snapshot = WidgetSnapshot.build(groups: groups, now: Date(), disabled: disabled)
+            if SnapshotStore.write(snapshot) {
+                print("snapshot: записан \(SnapshotStore.fileURL.path)")
+            } else {
+                print("WARNING: snapshot не записан (\(SnapshotStore.fileURL.path))")
+            }
             print("")
         }
         print(failed ? "FAILED" : "OK")
@@ -70,7 +73,9 @@ enum CheckMode {
     // a missing config file, enabled:false entries and the openrouter
     // credits-denied info state do not. Key VALUES are never printed — only
     // the source (env NAME / command / literal).
-    private static func runCustomProviders(now: Date, groups: inout [ProviderGroup]) -> Bool {
+    private static func runCustomProviders(
+        now: Date, disabled: Set<String>, groups: inout [ProviderGroup]
+    ) -> Bool {
         switch ProvidersConfigLoader.load() {
         case .missing(let path):
             print(ProvidersConfigLoader.isDefaultPath(path)
@@ -108,6 +113,10 @@ enum CheckMode {
             }
             for provider in config.providers {
                 print("")
+                if disabled.contains(provider.id) {
+                    print("\(provider.id): отключён в настройках")
+                    continue
+                }
                 print("-- \(provider.name) (id \(provider.id), kind \(provider.kind.rawValue)) --")
                 if runCustom(provider, now: now, groups: &groups) { failed = true }
             }

@@ -169,15 +169,36 @@ public struct ConfigEntryError: Equatable {
     public var menuRow: String { "\(name): ошибка конфига — \(reason)" }
 }
 
+/// An `enabled: false` entry: skipped by the runtime entirely, but the
+/// settings window (v0.5) still lists it — unchecked and non-toggleable,
+/// with the «выключен в providers.json» tooltip.
+public struct ConfigDisabledEntry: Equatable {
+    public var id: String?
+    public var name: String
+
+    public init(id: String?, name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
 public struct ProvidersConfig: Equatable {
     public var defaultPollSeconds: Int
     public var providers: [ConfiguredProvider]
     public var errors: [ConfigEntryError]
+    /// `enabled: false` entries in file order (settings window rows, v0.5).
+    public var disabledEntries: [ConfigDisabledEntry]
 
-    public init(defaultPollSeconds: Int, providers: [ConfiguredProvider], errors: [ConfigEntryError]) {
+    public init(
+        defaultPollSeconds: Int,
+        providers: [ConfiguredProvider],
+        errors: [ConfigEntryError],
+        disabledEntries: [ConfigDisabledEntry] = []
+    ) {
         self.defaultPollSeconds = defaultPollSeconds
         self.providers = providers
         self.errors = errors
+        self.disabledEntries = disabledEntries
     }
 }
 
@@ -223,6 +244,7 @@ public enum ProvidersConfigParser {
 
         var providers: [ConfiguredProvider] = []
         var errors: [ConfigEntryError] = []
+        var disabledEntries: [ConfigDisabledEntry] = []
         var seenIDs = Set<String>()
 
         for rawEntry in (root["providers"] as? [Any]) ?? [] {
@@ -230,7 +252,13 @@ public enum ProvidersConfigParser {
                 errors.append(ConfigEntryError(id: nil, name: "?", reason: "запись не объект"))
                 continue
             }
-            if JSONPath.bool(entry["enabled"]) == false { continue }
+            if JSONPath.bool(entry["enabled"]) == false {
+                let id = entry["id"] as? String
+                disabledEntries.append(ConfigDisabledEntry(
+                    id: id, name: (entry["name"] as? String) ?? id ?? "?"
+                ))
+                continue
+            }
 
             let idRaw = entry["id"] as? String
             let name = (entry["name"] as? String) ?? idRaw ?? "?"
@@ -307,7 +335,8 @@ public enum ProvidersConfigParser {
         return .parsed(ProvidersConfig(
             defaultPollSeconds: max(60, defaultPoll),
             providers: providers,
-            errors: errors
+            errors: errors,
+            disabledEntries: disabledEntries
         ))
     }
 

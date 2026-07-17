@@ -75,8 +75,29 @@ DeepSeek, Kimi, GLM, etc.): a section per enabled entry that must fetch and
 parse for exit 0, with the key SOURCE shown (`env NAME` / `command` /
 `literal`) but never key values. A missing config file prints
 `custom: нет ~/.config/limit-monitor/providers.json` and is NOT a failure.
+Providers the user unchecked in the app's settings window are reported as
+`<id>: отключён в настройках` and skipped — also NOT a failure.
 
 Also confirm the process is running: `pgrep -f "Limit Monitor.app"`.
+
+## Polling limits later (agents): prefer `--status --json` over `--check`
+
+For repeated quota checks during long autonomous runs use
+
+```sh
+"$HOME/Applications/Limit Monitor.app/Contents/MacOS/limit-monitor" --status --json
+```
+
+It prints the snapshot the running app refreshes after every poll
+(`~/Library/Application Support/limit-monitor/widget-snapshot.json`:
+per-provider percents/balances, level names, ISO-8601 reset times — never
+credentials) and makes NO network calls, so it is safe to run every few
+seconds. `--status` without `--json` prints a human-readable table instead.
+Exit 2 with `снапшот недоступен — запусти Limit Monitor или limit-monitor
+--check` means no snapshot exists yet: launch the app or run `--check` once
+(a successful `--check` also writes the snapshot). Reserve `--check` for
+install verification and troubleshooting — it hits the real APIs on every
+invocation.
 
 ## Tell the user after installing
 

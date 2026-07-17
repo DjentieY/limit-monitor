@@ -1,0 +1,49 @@
+{
+  "generatedAt" : "2026-07-17T08:00:00+00:00",
+  "providers" : [
+    {
+      "id" : "claude",
+      "label" : "Cl",
+      "limits" : [
+        {
+          "exhausted" : false,
+          "kind" : "session",
+          "label" : "5-часовой",
+          "level" : "green",
+          "percent" : 9,
+          "resetsAt" : "2026-07-17T09:30:00+00:00",
+          "text" : "9%",
+          "windowLabel" : "5h"
+        },
+        {
+          "exhausted" : false,
+          "kind" : "weekly_all",
+          "label" : "Недельный (все модели)",
+          "level" : "yellow",
+          "percent" : 52,
+          "resetsAt" : "2026-07-20T08:00:00+00:00",
+          "text" : "52%",
+          "windowLabel" : "7d"
+        }
+      ],
+      "name" : "Claude",
+      "stale" : false
+    },
+    {
+      "id" : "deepseek",
+      "label" : "DS",
+      "limits" : [
+        {
+          "exhausted" : true,
+          "kind" : "custom",
+          "label" : "DeepSeek",
+          "level" : "red",
+          "text" : "¥0.00"
+        }
+      ],
+      "name" : "DeepSeek",
+      "stale" : true
+    }
+  ],
+  "version" : 1
+}

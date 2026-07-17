@@ -20,22 +20,13 @@ public struct NotificationPlan {
 }
 
 public enum NotificationPlanner {
-    private static let stampFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.calendar = Calendar(identifier: .gregorian)
-        f.timeZone = TimeZone(secondsFromGMT: 0)
-        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'+00:00'"
-        return f
-    }()
-
     // The API recomputes resets_at per request with sub-second jitter that straddles
     // minute boundaries; identifiers must stay stable across polls, so round to the
     // nearest minute and re-serialize a canonical UTC stamp (raw value kept for display).
     public static func normalizedResetStamp(_ date: Date?) -> String {
         guard let date else { return "" }
         let rounded = Date(timeIntervalSince1970: (date.timeIntervalSince1970 / 60).rounded() * 60)
-        return stampFormatter.string(from: rounded)
+        return ISODateParser.utcString(from: rounded)
     }
 
     public static func resetIdentifier(for limit: LimitEntry) -> String {

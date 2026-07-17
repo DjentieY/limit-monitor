@@ -47,6 +47,16 @@ Novita out of the box, and a generic HTTP adapter for the rest — see
   from providers.json: OpenRouter, DeepSeek, Kimi, GLM Coding Plan,
   SiliconFlow, Novita built in, `generic-http` for nearly anything else —
   see [Custom providers (balances)](#custom-providers-balances)
+- **Settings window** («Настройки…», ⌘,) with a checkbox per provider —
+  untick one and it instantly stops polling and disappears from the bar,
+  menu, notifications and snapshot; tick it back and it refreshes immediately
+- **Desktop card** — an optional always-visible mini-dashboard pinned just
+  above the desktop icons (toggle «Виджет на рабочем столе»): every enabled
+  provider with its colored dots, values and reset times; drag it anywhere,
+  the position sticks
+- **`--status [--json]`** — the machine-readable integration point: prints
+  the latest usage snapshot without touching the network (see
+  [Status snapshot](#status-snapshot-agents-swiftbar-raycast))
 - Read-only by design: it never refreshes or mutates your Claude, Codex or
   Cursor tokens, so it can never desync those tools' own sessions
 - No telemetry, no third-party dependencies; the only network calls are
@@ -127,6 +137,29 @@ A complete sample with all built-ins, both presets and a generic recipe:
 entry ships `"enabled": false`, flip on the ones you use.
 `limit-monitor --check` verifies each enabled entry end-to-end.
 
+## Status snapshot (agents, SwiftBar, Raycast)
+
+After every poll (and after every successful `--check`) the app atomically
+writes `~/Library/Application Support/limit-monitor/widget-snapshot.json` —
+version, `generatedAt`, and per provider the labels, percents/balances, level
+names and reset times. Numbers and timestamps only, never credentials.
+
+- `limit-monitor --status` — human-readable table from that snapshot
+  (header says `(устарело)` when the data is older than 15 minutes);
+- `limit-monitor --status --json` — the snapshot verbatim, for scripts.
+
+Both read the local file and make **no network calls**, so agents can poll
+them as often as they like — this is the recommended quota check before/during
+long autonomous runs. Exit 2 with a hint means no snapshot yet: run the app or
+`limit-monitor --check` once.
+
+The same file powers SwiftBar/xbar/Raycast integrations. A complete SwiftBar
+plugin (`~/SwiftBar/limits.1m.sh`, `chmod +x`) is one line:
+
+```sh
+"$HOME/Applications/Limit Monitor.app/Contents/MacOS/limit-monitor" --status
+```
+
 ## Roadmap
 
 - [x] **Codex + Cursor adapters** in the macOS app — one bar for all your
@@ -136,8 +169,9 @@ entry ships `"enabled": false`, flip on the ones you use.
   and the model developers' own platforms — Moonshot (Kimi), Zhipu (GLM),
   Alibaba (Qwen), DeepSeek, and friends. If it exposes a balance or a quota,
   it should fit in the bar.
-- [ ] **macOS widget** — Notification Center / sidebar widget (WidgetKit) for a
-  quick glance without touching the menu bar
+- [x] **macOS widget** — desktop card + snapshot/status JSON (real WidgetKit
+  widget requires an Apple-signed build — recipe conserved in
+  [research/widget.md](research/widget.md))
 - [ ] **Cross-platform core** — shared Go core + Windows/Linux tray apps
 - [ ] UI localization (menu is currently Russian) and a README screenshot
 
@@ -177,7 +211,10 @@ Detailed agent instructions, troubleshooting and uninstall: https://raw.githubus
 Agents can also use the app binary as a quota API before starting long
 autonomous runs: `limit-monitor --check` prints all current limits per
 provider (Claude, plus Codex and Cursor when their credentials exist on the
-machine) and exits 0.
+machine) and exits 0. For frequent polling prefer
+`limit-monitor --status --json` — it reads the local snapshot the app keeps
+fresh and never touches the network (see
+[Status snapshot](#status-snapshot-agents-swiftbar-raycast)).
 
 ## How it works
 
