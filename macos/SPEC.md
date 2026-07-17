@@ -761,3 +761,150 @@ file, `--status [--json]`, NSPanel desktop card.
   Apple-signed build — recipe conserved in research/widget.md)`.
 - llms-install.md: `--status --json` for agents (prefer it over `--check` for
   frequent polling — no network).
+
+---
+
+# v0.6 — Internationalization: English default + Russian (2026-07-17)
+
+The UI is currently Russian-only while the repo/README are English. v0.6 makes
+**English the default** and keeps Russian, selected automatically by the system
+language. Approved via the dev-v2 design loop (concept-roaster APPROVED, 8/10).
+No behavior changes beyond wording/locale; all providers, notifications,
+settings and snapshot semantics stay as specified above.
+
+## Mechanism — a code catalog in Core (NOT `.strings`/`.lproj`)
+
+- Each user-facing string has an EN and a RU production selected by an
+  **exhaustive `switch (lang, …)`** in `LimitMonitorCore`. No resource bundles,
+  no `Bundle.module` (fragile for a CLT-only, ad-hoc-signed SPM executable; and
+  `checks` must call formatting functions directly). Exhaustiveness makes "every
+  key has EN and RU" a compile-time guarantee. Core stays **Foundation-only**.
+- Shapes: small **domain enums** with a direct `text(_ lang: Language) -> String`
+  method — `MenuStr`, `NotifStr`, `StatusStr`, `StateStr`, `ConfigStr`,
+  `NetErrStr`, `ChromeStr` (atomic/templated strings; parameters are typed
+  associated values, e.g. `percentWithReset(label:percent:Int,reset:String)`).
+  Heavily-branched composites (`Labels.*`, `TimeFormat.*`) stay **functions
+  taking `lang`**. No `Localizable` protocol (never used polymorphically).
+
+## `Language` seam
+
+- `public enum Language: String { case en, ru }` in `LimitMonitorCore/Language.swift`.
+  `static func resolve(preferred: [String] = Locale.preferredLanguages) -> Language`:
+  **EN default**; `.ru` iff `preferred.first?.lowercased()` has prefix `ru`
+  (uses `preferredLanguages`, the ordered UI-language list, NOT region). Pure and
+  injectable — `checks` drive both locales deterministically regardless of the CI
+  machine locale.
+- **Explicit threading, per process, no global.** Every localizable Core entry
+  point gains `_ lang: Language` as its **last** parameter. The shell resolves
+  **one** `let lang` at launch and threads it down. No ambient mutable
+  `CurrentLanguage` (would break `checks` determinism). The three surfaces (GUI,
+  `--check`, `--status`) are separate process invocations — each resolves one
+  language.
+
+## Surface decisions
+
+- **`--check` → ALWAYS English.** It is the e2e/CI/agent diagnostic surface;
+  stable English is locale-independent, greppable, reproducible. Rewrite its
+  ~25 local console literals RU→EN inline (single-language; `CheckMode` calls
+  Core helpers with `lang = .en`), delete the RU pluralization hack
+  (`segmentsWord` сегмент/сегмента/сегментов → "1 segment"/"N segments"), and
+  drop `ru_RU` from its stamp formatter for `en_US_POSIX`.
+- **`--status` → the reader's locale L.** Chrome (`Updated:`/`Обновлено:`,
+  `(stale)`/`(устарело)`, level words, `resets`/`сброс`, `exhausted`/`исчерпан`)
+  AND each row **label** are produced at render time in L.
+- **Menu, notifications, settings window, desktop card → localized (EN default + RU).**
+  Preserve the EXACT existing RU wording as the RU arm; do not reword RU.
+
+## Snapshot is fully NEUTRAL (schema v2) — the load-bearing correctness fix
+
+The snapshot file is written by TWO processes (GUI in system locale; `--check`
+pinned to EN, which also rewrites it on success). A baked localized `label`
+would depend on who last wrote the file, so `--status` could print a mixed
+ru/en table. Therefore:
+
+- `WidgetSnapshot.build` takes **no `lang`** and emits only neutral fields.
+  `LimitRow` **drops `label`** and gains **`scopeName: String?`** (neutral
+  brand/model name, e.g. `Fable`) **and `windowMinutes: Int?`** (neutral raw
+  window size — REQUIRED: codex/config-windowed labels are classified from the
+  raw minutes with tolerance ±60/±1440, which the rounded `windowLabel` loses;
+  without it a 335-min window that the menu shows as `5-часовой` would render as
+  `Окно 6 ч` in `--status`). `WidgetSnapshot.currentVersion = 2`; the parser
+  rejects any version ≠ 2.
+- Labels are reconstructed at each reader's render from a shared neutral
+  `LabelDescriptor(providerId, kind, scopeName, windowLabel, windowMinutes,
+  isBalance, name)`. `Labels.menuLabel(descriptor:_ lang:)` is the single
+  decision tree; the live path feeds it from a `LimitEntry`, the `--status` path
+  from a `LimitRow`. One switch, two feeders — no drift, live menu labels
+  unchanged.
+- `--status --json` stays a verbatim byte copy. Agents key off structural
+  fields (`kind`/`scopeName`/`level`/`percent`/`resetsAt`); there is no
+  language-bearing field. Ephemeral file (rewritten each poll) → no migration; a
+  stale v1 file is rejected and `--status` prints the missing-snapshot hint
+  until the next poll writes v2.
+
+## Neutral (never localized)
+
+Bar prefixes `Cl·/Cx·/Cu·` and 2-char labels; window labels `5h/7d/Auto/API/OnD`;
+`TitleFormatter` segments; `BalanceFormat`; level tokens `green/yellow/orange/red`;
+`N%`; `$23.45`; `∞`; **the app brand name `Limit Monitor`** (`CFBundleName`,
+window titles, the desktop-card `Limit Monitor:` prefix — a proper noun). Note:
+the app is `LSUIElement`, so there is no standard App menu (no auto `About/Quit
+<name>`), and the notification-permission prompt is OS-localized. All snapshot
+structural fields and all identifiers stay neutral.
+
+## `checks` additions
+
+- **§36 resolver**: `resolve(preferred:)` — `["ru-RU"]/["ru"]→.ru`,
+  `["en-US"]/["de-DE",…]/[]→.en`.
+- **§37 both-locale wording**: existing RU asserts (5/9/14/19/35) gain EN
+  mirrors; add EN+RU for `MenuText.infoRow`, reset/exhausted titles+bodies
+  (claude/codex/cursor/config/balance), `TimeFormat.relative`+`absolute`
+  (`через …`/`in …`, `сейчас`/`now`), `StatusCommand` chrome + `levelWord`,
+  `MenuStr`/`StateStr`, `ConfigStr` (spot).
+- **§38 snapshot v2 + bilingual `--status`**: snapshot is neutral (no `label`;
+  has `scopeName`+`windowMinutes`); `--status` render in `.en` vs `.ru` from the
+  SAME neutral snapshot yields correct labels incl. a codex window at a
+  tolerance boundary (335 min → `5-часовой`/`5-hour`, NOT `Окно 6 ч`).
+- **§39 `--status` locale wiring**: drive `StatusCommand.output/render` through a
+  `resolve(preferred:)` override and assert output locale (Core-reachable). NOTE:
+  `--check` (`CheckMode`) lives in the shell target and is NOT reachable from
+  `checks` — its EN pinning is covered by inline literals + Core calls pinned to
+  `.en`, not a resolve-override test.
+- **Fix existing §32**: the version-rejection sentinel at `checks/main.swift`
+  currently uses `version:2` as the rejected case — after the bump it must use a
+  different rejected version (e.g. `3`). **Regenerate** `fixtures/
+  widget_snapshot_sample.json` to schema v2 (drop `label`, add `scopeName` +
+  `windowMinutes`, `version:2`) or §35 hits a FATAL exit.
+- Estimate: ~+100 asserts → ~525 total. The compiler proves key completeness;
+  `checks` spot-check wording.
+
+## Migration (no big-bang)
+
+Newly-parameterized Core functions get a **transitional `lang: Language = .ru`
+default** so un-migrated callers keep emitting RU and the 424 existing asserts
+stay green at each step. Order: (0) seam + §36; (1) Core leaves in dependency
+order `TimeFormat → Labels(+LabelDescriptor) → MenuText → Notifications →
+StatusCommand → WidgetSnapshot(v2) → ProvidersConfig/ConfigAdapters`, adding EN
+arms + EN asserts as each lands; (2) shell threads real L (GUI resolves once;
+`CheckMode` pins `.en`; `StatusMode` resolves system; pollers thread lang);
+(3) **remove the transitional defaults** so the compiler flags any un-threaded
+call site; final both-locale `checks` pass. `swift run checks` green after every
+sub-step. `TimeFormat` (EN `DateFormatter` set + gating the RU-only quirks
+`lowercased(with: ruLocale)`, month-dot strip, `в` preposition) is the fiddliest
+file. One file per commit.
+
+## Deferred to v0.7
+
+A manual Auto/EN/RU picker in Settings (the seam is pre-wired; the deferred cost
+is live re-render of the status item/menu/card and re-texting already-scheduled
+`reset|*` notifications — orthogonal to the i18n core).
+
+## Docs (v0.6)
+
+- README: note that the UI is English by default and switches to Russian on a
+  Russian system; drop the "UI currently Russian" caveat.
+- llms-install.md / README status section: the snapshot's **structural fields**
+  (`kind`/`scopeName`/`level`/`percent`/`resetsAt`) are the agent contract — the
+  `label` field is gone; do not grep display strings.
+- Update the v0.5 snapshot JSON example above to schema v2 (no `label`; add
+  `scopeName`, `windowMinutes`).
