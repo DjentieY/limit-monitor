@@ -8,7 +8,6 @@
         {
           "exhausted" : false,
           "kind" : "session",
-          "label" : "5-часовой",
           "level" : "green",
           "percent" : 9,
           "resetsAt" : "2026-07-17T09:30:00+00:00",
@@ -18,15 +17,42 @@
         {
           "exhausted" : false,
           "kind" : "weekly_all",
-          "label" : "Недельный (все модели)",
           "level" : "yellow",
           "percent" : 52,
           "resetsAt" : "2026-07-20T08:00:00+00:00",
           "text" : "52%",
           "windowLabel" : "7d"
+        },
+        {
+          "exhausted" : false,
+          "kind" : "weekly_scoped",
+          "level" : "green",
+          "percent" : 39,
+          "resetsAt" : "2026-07-20T08:00:00+00:00",
+          "scopeName" : "Fable",
+          "text" : "39%",
+          "windowLabel" : "7d"
         }
       ],
       "name" : "Claude",
+      "stale" : false
+    },
+    {
+      "id" : "codex",
+      "label" : "Cx",
+      "limits" : [
+        {
+          "exhausted" : false,
+          "kind" : "session",
+          "level" : "green",
+          "percent" : 20,
+          "resetsAt" : "2026-07-17T13:00:00+00:00",
+          "text" : "20%",
+          "windowLabel" : "5h",
+          "windowMinutes" : 335
+        }
+      ],
+      "name" : "Codex",
       "stale" : false
     },
     {
@@ -36,7 +62,6 @@
         {
           "exhausted" : true,
           "kind" : "custom",
-          "label" : "DeepSeek",
           "level" : "red",
           "text" : "¥0.00"
         }
@@ -45,5 +70,5 @@
       "stale" : true
     }
   ],
-  "version" : 1
+  "version" : 2
 }

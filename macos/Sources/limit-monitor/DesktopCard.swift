@@ -118,7 +118,7 @@ final class DesktopCard {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         if providers.isEmpty {
-            let empty = NSTextField(labelWithString: "Limit Monitor: нет данных")
+            let empty = NSTextField(labelWithString: ChromeStr.cardNoData.text(appLanguage))
             empty.font = rowFont
             empty.textColor = .secondaryLabelColor
             stack.addArrangedSubview(empty)
@@ -163,7 +163,7 @@ final class DesktopCard {
             dot.font = rowFont
             dot.textColor = UIStyle.color(for: limit.level)
 
-            let label = NSTextField(labelWithString: Labels.menuLabel(for: limit))
+            let label = NSTextField(labelWithString: Labels.menuLabel(for: limit, appLanguage))
             label.font = rowFont
             label.lineBreakMode = .byTruncatingTail
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -175,7 +175,7 @@ final class DesktopCard {
             value.alignment = .right
 
             let reset = NSTextField(labelWithString: limit.resetsAt.map {
-                "до \(TimeFormat.compact($0, now: now))"
+                ChromeStr.cardReset(time: TimeFormat.compact($0, now: now, appLanguage)).text(appLanguage)
             } ?? "")
             reset.font = rowFont
             reset.textColor = .secondaryLabelColor

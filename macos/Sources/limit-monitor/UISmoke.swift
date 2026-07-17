@@ -16,7 +16,7 @@ enum UISmoke {
                 .init(id: Provider.cursor, title: "Cursor", checked: false, enabled: true, tooltip: nil),
                 .init(id: "deepseek", title: "DeepSeek", checked: true, enabled: true, tooltip: nil),
                 .init(id: nil, title: "Kimi", checked: false, enabled: false,
-                      tooltip: "выключен в providers.json"),
+                      tooltip: ChromeStr.disabledInConfigTooltip.text(appLanguage)),
             ],
             configPath: ProvidersConfigFile.path(),
             configExists: FileManager.default.fileExists(atPath: ProvidersConfigFile.path()),

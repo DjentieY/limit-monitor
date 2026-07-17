@@ -19,9 +19,24 @@ public enum KeySource: Equatable {
 }
 
 public enum KeyResolutionStrings {
+    // RU constants preserved for the shell's current callers (KeyResolver); the
+    // localized accessor below is the seam the shell threads `lang` through.
     public static let commandFailed = "ключ: команда не выполнилась"
     public static let envUnset = "ключ: переменная окружения не задана"
     public static let empty = "ключ: пустое значение"
+
+    public enum Reason { case commandFailed, envUnset, empty }
+
+    public static func text(_ reason: Reason, _ lang: Language) -> String {
+        switch (lang, reason) {
+        case (.ru, .commandFailed): return commandFailed
+        case (.en, .commandFailed): return "key: command failed"
+        case (.ru, .envUnset):      return envUnset
+        case (.en, .envUnset):      return "key: env var not set"
+        case (.ru, .empty):         return empty
+        case (.en, .empty):         return "key: empty value"
+        }
+    }
 }
 
 public enum ConfigProviderKind: String, Equatable {
@@ -166,7 +181,10 @@ public struct ConfigEntryError: Equatable {
         self.reason = reason
     }
 
-    public var menuRow: String { "\(name): ошибка конфига — \(reason)" }
+    /// Kept as a property (used as a `\.menuRow` key path). The parse `reason`
+    /// itself is not yet keyed (deferred, design R5) so this stays RU; the shell
+    /// can render EN via `ConfigStr.entryError(name:reason:).text(lang)`.
+    public var menuRow: String { ConfigStr.entryError(name: name, reason: reason).text(.ru) }
 }
 
 /// An `enabled: false` entry: skipped by the runtime entirely, but the
@@ -214,10 +232,12 @@ public enum ProvidersConfigFile {
         return home + "/.config/limit-monitor/providers.json"
     }
 
-    public static let missingCheckLine = "custom: нет ~/.config/limit-monitor/providers.json"
-    public static let malformedMenuRow = "providers.json: ошибка разбора"
-    public static let unsupportedVersionMenuRow = "providers.json: неподдерживаемая версия (нужна 1)"
-    public static let permissiveMenuRow = "providers.json доступен другим (chmod 600)"
+    // RU aliases routed through ConfigStr (single source of truth). The shell
+    // migrates to `ConfigStr.<case>.text(lang)` when it threads `lang` (Stage 3).
+    public static let missingCheckLine = ConfigStr.missingCheck.text(.ru)
+    public static let malformedMenuRow = ConfigStr.malformed.text(.ru)
+    public static let unsupportedVersionMenuRow = ConfigStr.unsupportedVersion.text(.ru)
+    public static let permissiveMenuRow = ConfigStr.permissive.text(.ru)
 
     /// Group/other-readable config may leak literal keys.
     public static func isPermissive(posixPermissions: Int) -> Bool {

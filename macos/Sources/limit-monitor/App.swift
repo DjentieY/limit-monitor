@@ -4,6 +4,11 @@ import LimitMonitorCore
 
 let isRunningInBundle = Bundle.main.bundlePath.hasSuffix(".app")
 
+// SPEC v0.6: the GUI resolves ONE UI language per process at launch and threads
+// it into every Core call. EN default; RU when the top preferred language is
+// Russian. Immutable, resolved once — the shell's single localized value.
+let appLanguage = Language.resolve()
+
 func runApp() {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
@@ -93,7 +98,7 @@ final class ProviderRuntime {
 enum ClaudePoller {
     static func poll() -> PollOutcome {
         guard let loaded = CredentialsProvider.load() else {
-            return .inactive(menuRow: "Claude: нет учётных данных — открой Claude Code")
+            return .inactive(menuRow: StateStr.claudeNoCredentials.text(appLanguage))
         }
         if loaded.creds.isExpired() { return .failure(.tokenExpired) }
         switch UsageFetcher.fetchSync(token: loaded.creds.accessToken) {
@@ -110,9 +115,9 @@ enum CodexPoller {
         case .missing:
             return .inactive(menuRow: nil)
         case .apiKeyOnly:
-            return .inactive(menuRow: "Codex: API-key режим — план-лимитов нет")
+            return .inactive(menuRow: StateStr.codexApiKeyMode.text(appLanguage))
         case .unreadable:
-            return .inactive(menuRow: "Codex: auth.json без tokens.access_token")
+            return .inactive(menuRow: StateStr.codexNoAccessToken.text(appLanguage))
         case .oauth(let auth, _):
             switch CodexUsageFetcher.fetchSync(auth: auth).result {
             case .success(let limits): return .success(limits)
@@ -129,9 +134,9 @@ enum CursorPoller {
         // Re-read the token from the DB on every poll — Cursor rotates it.
         switch CursorCredentialsProvider.load() {
         case .missing, .emptyToken:
-            return .inactive(menuRow: "cursor: неактивен (нет Cursor)")
+            return .inactive(menuRow: StateStr.cursorInactive.text(appLanguage))
         case .queryFailed:
-            // Transient sqlite busy/lock is not "нет Cursor": keep last data,
+            // Transient sqlite busy/lock is not "no Cursor": keep last data,
             // show the per-provider ⚠; the 300 s cadence self-heals it.
             return .failure(.network)
         case .badToken:
@@ -180,13 +185,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .missing:
             break
         case .malformed:
-            rows.append(ProvidersConfigFile.malformedMenuRow)
+            rows.append(ConfigStr.malformed.text(appLanguage))
         case .unsupportedVersion:
-            rows.append(ProvidersConfigFile.unsupportedVersionMenuRow)
+            rows.append(ConfigStr.unsupportedVersion.text(appLanguage))
         case .loaded(let config, _, let permissive):
-            if permissive { rows.append(ProvidersConfigFile.permissiveMenuRow) }
+            if permissive { rows.append(ConfigStr.permissive.text(appLanguage)) }
             runtimes.append(contentsOf: config.providers.map { ProviderRuntime(custom: $0) })
-            rows.append(contentsOf: config.errors.map(\.menuRow))
+            rows.append(contentsOf: config.errors.map {
+                ConfigStr.entryError(name: $0.name, reason: $0.reason).text(appLanguage)
+            })
             disabledNames = config.disabledEntries.map(\.name)
         }
         providers = runtimes
@@ -279,7 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // Not a failure (openrouter credits denied to this key): the
                 // provider has nothing to show — a disabled menu row, no bar group.
                 provider.active = false
-                provider.inactiveMenuRow = MenuText.stateRow(name: provider.displayName, state: state)
+                provider.inactiveMenuRow = MenuText.stateRow(name: provider.displayName, state: state, appLanguage)
                 provider.limits = []
                 provider.lastSuccess = nil
                 provider.health = .ok
@@ -331,7 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let defaults = UserDefaults.standard
         let enabled = defaults.bool(forKey: "notifyOnReset")
         let already = (defaults.dictionary(forKey: "exhaustedNotified") as? [String: Bool]) ?? [:]
-        let plan = NotificationPlanner.plan(limits: merged, now: Date(), alreadyNotified: already)
+        let plan = NotificationPlanner.plan(limits: merged, now: Date(), alreadyNotified: already, appLanguage)
         var notified = plan.prunedNotified
         for (key, value) in already where notified[key] == nil {
             guard unreported.contains(NotificationPlanner.identifierProvider(key)),
@@ -407,7 +414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let active = activeProviders()
         if enabledRuntimes().isEmpty {
             // Every provider unchecked in the settings — static brand title,
-            // the menu (incl. Настройки…) stays reachable.
+            // the menu (incl. Settings…) stays reachable.
             append("LM")
         } else if active.isEmpty {
             append("⚠…")
@@ -427,28 +434,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func errorLine(for provider: ProviderRuntime, multi: Bool) -> String {
         if let state = provider.customState {
-            return MenuText.stateRow(name: provider.displayName, state: state)
+            return MenuText.stateRow(name: provider.displayName, state: state, appLanguage)
         }
+        let name = Provider.displayName(provider.id)
         switch provider.health {
         case .ok:
             return ""
         case .tokenExpired:
             switch provider.id {
-            case Provider.codex: return "Токен Codex истёк — запусти codex"
-            case Provider.cursor: return "Токен Cursor истёк — открой Cursor"
-            default: return "Токен истёк — открой Claude Code"
+            case Provider.codex: return StateStr.codexTokenExpired.text(appLanguage)
+            case Provider.cursor: return StateStr.cursorTokenExpired.text(appLanguage)
+            default: return StateStr.claudeTokenExpired.text(appLanguage)
             }
         case .badCredentials:
             switch provider.id {
-            case Provider.cursor: return "Токен Cursor не разобран — перелогинься в Cursor"
-            default: return "\(Provider.displayName(provider.id)): учётные данные не разобраны"
+            case Provider.cursor: return StateStr.cursorBadToken.text(appLanguage)
+            default: return StateStr.builtinBadCredentials(name: name).text(appLanguage)
             }
         case .network:
-            let prefix = multi ? "\(Provider.displayName(provider.id)): нет сети" : "Нет сети"
+            let prefix = multi ? StateStr.builtinNoNetwork(name: name).text(appLanguage)
+                               : ChromeStr.noNetwork.text(appLanguage)
             guard let lastSuccess = provider.lastSuccess else { return prefix }
-            return "\(prefix) · данные от \(TimeFormat.clock(lastSuccess))"
+            return "\(prefix) · \(ChromeStr.dataFrom.text(appLanguage)) \(TimeFormat.clock(lastSuccess, appLanguage))"
         case .parseError:
-            return "\(Provider.displayName(provider.id)): ошибка ответа API"
+            return StateStr.builtinApiError(name: name).text(appLanguage)
         }
     }
 
@@ -458,8 +467,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return errorLine(for: provider, multi: false)
         }
         let lastSuccess = active.compactMap(\.lastSuccess).max()
-        if let lastSuccess { return "Обновлено: \(TimeFormat.clock(lastSuccess))" }
-        return active.isEmpty ? "Нет данных" : "Загрузка…"
+        if let lastSuccess {
+            return "\(ChromeStr.updated.text(appLanguage)) \(TimeFormat.clock(lastSuccess, appLanguage))"
+        }
+        return active.isEmpty ? ChromeStr.noData.text(appLanguage) : ChromeStr.loading.text(appLanguage)
     }
 
     private func disabledItem(_ title: String) -> NSMenuItem {
@@ -497,7 +508,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 addedRows = true
             }
             for limit in provider.limits {
-                let text = MenuText.infoRow(for: limit, now: now)
+                let text = MenuText.infoRow(for: limit, now: now, appLanguage)
                 let item = disabledItem("● \(text)")
                 let attributed = NSMutableAttributedString()
                 attributed.append(NSAttributedString(
@@ -511,7 +522,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if multi {
                 if provider.limits.isEmpty, provider.health == .ok {
-                    menu.addItem(disabledItem("Загрузка…"))
+                    menu.addItem(disabledItem(ChromeStr.loading.text(appLanguage)))
                     addedRows = true
                 }
                 if provider.health != .ok {
@@ -528,18 +539,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(disabledItem(statusLine()))
 
-        let refresh = NSMenuItem(title: "Обновить сейчас", action: #selector(refreshNow), keyEquivalent: "r")
+        let refresh = NSMenuItem(title: ChromeStr.refreshNow.text(appLanguage), action: #selector(refreshNow), keyEquivalent: "r")
         refresh.target = self
         refresh.isEnabled = true
         menu.addItem(refresh)
 
-        let notify = NSMenuItem(title: "Уведомления о лимитах", action: #selector(toggleNotify), keyEquivalent: "")
+        let notify = NSMenuItem(title: ChromeStr.notifications.text(appLanguage), action: #selector(toggleNotify), keyEquivalent: "")
         notify.target = self
         notify.isEnabled = true
         notify.state = UserDefaults.standard.bool(forKey: "notifyOnReset") ? .on : .off
         menu.addItem(notify)
 
-        let login = NSMenuItem(title: "Запускать при входе", action: #selector(toggleLoginItem), keyEquivalent: "")
+        let login = NSMenuItem(title: ChromeStr.launchAtLogin.text(appLanguage), action: #selector(toggleLoginItem), keyEquivalent: "")
         if isRunningInBundle {
             login.target = self
             login.isEnabled = true
@@ -550,19 +561,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menu.addItem(login)
 
-        let card = NSMenuItem(title: "Виджет на рабочем столе", action: #selector(toggleDesktopCard), keyEquivalent: "")
+        let card = NSMenuItem(title: ChromeStr.desktopCard.text(appLanguage), action: #selector(toggleDesktopCard), keyEquivalent: "")
         card.target = self
         card.isEnabled = true
         card.state = UserDefaults.standard.bool(forKey: DesktopCard.defaultsKey) ? .on : .off
         menu.addItem(card)
 
-        let settingsItem = NSMenuItem(title: "Настройки…", action: #selector(openSettings), keyEquivalent: ",")
+        let settingsItem = NSMenuItem(title: ChromeStr.settings.text(appLanguage), action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         settingsItem.isEnabled = true
         menu.addItem(settingsItem)
 
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Выход", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: ChromeStr.quit.text(appLanguage), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.isEnabled = true
         menu.addItem(quit)
 
@@ -673,7 +684,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rows.append(contentsOf: configDisabledNames.map { name in
             SettingsWindowController.ProviderRow(
                 id: nil, title: name, checked: false, enabled: false,
-                tooltip: "выключен в providers.json"
+                tooltip: ChromeStr.disabledInConfigTooltip.text(appLanguage)
             )
         })
         let configPath = ProvidersConfigFile.path()

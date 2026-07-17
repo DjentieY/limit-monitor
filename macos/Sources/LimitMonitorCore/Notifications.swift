@@ -54,7 +54,8 @@ public enum NotificationPlanner {
     public static func plan(
         limits: [LimitEntry],
         now: Date,
-        alreadyNotified: [String: Bool]
+        alreadyNotified: [String: Bool],
+        _ lang: Language
     ) -> NotificationPlan {
         var scheduled: [PlannedReset] = []
         var immediate: [PlannedExhaustion] = []
@@ -64,8 +65,8 @@ public enum NotificationPlanner {
                 scheduled.append(PlannedReset(
                     identifier: resetIdentifier(for: limit),
                     fireDate: date.addingTimeInterval(5),
-                    title: Labels.resetTitle(for: limit),
-                    body: Labels.resetBody(for: limit)
+                    title: Labels.resetTitle(for: limit, lang),
+                    body: Labels.resetBody(for: limit, lang)
                 ))
             }
             if limit.isExhausted {
@@ -74,15 +75,18 @@ public enum NotificationPlanner {
                     let body: String
                     if let balanceText = limit.balanceText {
                         // Balance exhaustion (v0.4): `Осталось $0.00.`
-                        body = "Осталось \(balanceText)."
+                        body = NotifStr.remaining(balance: balanceText).text(lang)
                     } else if let date = limit.resetsAt {
-                        body = "Возобновится \(TimeFormat.relative(date, now: now)) (\(TimeFormat.absolute(date, now: now)))."
+                        body = NotifStr.resumeAt(
+                            relative: TimeFormat.relative(date, now: now, lang),
+                            absolute: TimeFormat.absolute(date, now: now, lang)
+                        ).text(lang)
                     } else {
-                        body = "Время возобновления неизвестно."
+                        body = NotifStr.resumeUnknown.text(lang)
                     }
                     immediate.append(PlannedExhaustion(
                         identifier: identifier,
-                        title: Labels.exhaustedTitle(for: limit),
+                        title: Labels.exhaustedTitle(for: limit, lang),
                         body: body
                     ))
                 }

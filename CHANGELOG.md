@@ -10,6 +10,34 @@ changes its API.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-17
+
+Internationalization: the UI is now **English by default** and switches to
+Russian automatically on a Russian system.
+
+### Added
+
+- English localization of every user-facing surface — menu, notifications, the
+  settings window, the desktop card and the `--status` table — selected by the
+  system language (`Locale.preferredLanguages`); Russian is preserved verbatim.
+- A code-based EN+RU string catalog in the core (compile-time complete; no
+  resource bundles), with the language resolved once per process.
+
+### Changed
+
+- `--check` output is now always English (a stable, greppable diagnostic
+  surface for CI and agents).
+- **Widget snapshot schema is now v2** and fully neutral: the localized `label`
+  field is gone; labels are reconstructed at read time from the neutral
+  `kind` / `scopeName` / `windowMinutes` fields. External consumers
+  (SwiftBar/agents) should key off those structural fields, not display text.
+  A stale v1 snapshot is rejected and regenerated on the next poll.
+
+### Notes
+
+- A manual language picker in Settings is planned for a later release; malformed
+  `providers.json` parse reasons are not yet localized.
+
 ## [0.5.0] - 2026-07-17
 
 First tagged release. A macOS menu bar monitor for AI subscription rate limits
@@ -49,5 +77,6 @@ and balances. Consolidates the internal `v0.1`–`v0.5` milestones.
   provider token.
 - UI is currently Russian; English localization is in progress.
 
-[Unreleased]: https://github.com/DjentieY/limit-monitor/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/DjentieY/limit-monitor/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/DjentieY/limit-monitor/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/DjentieY/limit-monitor/releases/tag/v0.5.0

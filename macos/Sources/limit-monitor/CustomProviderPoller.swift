@@ -21,25 +21,26 @@ enum CustomProviderEngine {
         let steps: [StepLog]
     }
 
-    static func run(provider: ConfiguredProvider, key: String) -> Outcome {
+    static func run(provider: ConfiguredProvider, key: String, _ lang: Language) -> Outcome {
         guard let request = ConfigRequestBuilder.primary(for: provider, key: key) else {
-            return Outcome(result: .state(.configError("request не задан")), steps: [])
+            let reason = lang == .en ? "request not set" : "request не задан"
+            return Outcome(result: .state(.configError(reason)), steps: [])
         }
         var steps: [StepLog] = []
-        let primary = CustomProviderFetcher.fetchSync(request)
+        let primary = CustomProviderFetcher.fetchSync(request, lang)
         steps.append(StepLog(
             url: displayURL(for: provider),
             httpStatus: primary.httpStatus,
             networkError: primary.networkError
         ))
         guard primary.networkError == nil, let status = primary.httpStatus, let data = primary.data else {
-            return Outcome(result: .state(.fetchError(primary.networkError ?? "пустой ответ")), steps: steps)
+            return Outcome(result: .state(.fetchError(primary.networkError ?? NetErrStr.emptyResponse.text(lang))), steps: steps)
         }
-        var result = parse(provider: provider, data: data, httpStatus: status)
+        var result = parse(provider: provider, data: data, httpStatus: status, lang)
         if case .needsCredits = result {
             // openrouter two-step: /key carries no per-key limit → balance from /credits.
             let creditsRequest = ConfigRequestBuilder.openRouterCredits(key: key)
-            let credits = CustomProviderFetcher.fetchSync(creditsRequest)
+            let credits = CustomProviderFetcher.fetchSync(creditsRequest, lang)
             steps.append(StepLog(
                 url: creditsRequest.url,
                 httpStatus: credits.httpStatus,
@@ -47,27 +48,27 @@ enum CustomProviderEngine {
             ))
             guard credits.networkError == nil, let creditsStatus = credits.httpStatus,
                   let creditsData = credits.data else {
-                return Outcome(result: .state(.fetchError(credits.networkError ?? "пустой ответ")), steps: steps)
+                return Outcome(result: .state(.fetchError(credits.networkError ?? NetErrStr.emptyResponse.text(lang))), steps: steps)
             }
             result = OpenRouterAdapter.parseCredits(
-                data: creditsData, httpStatus: creditsStatus, provider: provider
+                data: creditsData, httpStatus: creditsStatus, provider: provider, lang
             )
         }
         return Outcome(result: result, steps: steps)
     }
 
-    static func parse(provider: ConfiguredProvider, data: Data, httpStatus: Int) -> AdapterResult {
+    static func parse(provider: ConfiguredProvider, data: Data, httpStatus: Int, _ lang: Language) -> AdapterResult {
         switch provider.kind {
         case .openrouter:
-            return OpenRouterAdapter.parseKey(data: data, httpStatus: httpStatus, provider: provider)
+            return OpenRouterAdapter.parseKey(data: data, httpStatus: httpStatus, provider: provider, lang)
         case .deepseek:
-            return DeepSeekAdapter.parse(data: data, httpStatus: httpStatus, provider: provider)
+            return DeepSeekAdapter.parse(data: data, httpStatus: httpStatus, provider: provider, lang)
         case .moonshot:
-            return MoonshotAdapter.parse(data: data, httpStatus: httpStatus, provider: provider)
+            return MoonshotAdapter.parse(data: data, httpStatus: httpStatus, provider: provider, lang)
         case .zhipu:
-            return ZhipuAdapter.parse(data: data, httpStatus: httpStatus, provider: provider)
+            return ZhipuAdapter.parse(data: data, httpStatus: httpStatus, provider: provider, lang)
         case .siliconflow, .novita, .genericHTTP:
-            return GenericAdapter.parse(data: data, httpStatus: httpStatus, provider: provider)
+            return GenericAdapter.parse(data: data, httpStatus: httpStatus, provider: provider, lang)
         }
     }
 
@@ -86,17 +87,17 @@ struct CustomProviderPoller {
 
     func poll() -> PollOutcome {
         let key: String
-        switch KeyResolver.resolve(provider.key) {
+        switch KeyResolver.resolve(provider.key, appLanguage) {
         case .failure(let reason):
             return .customState(.keyError(reason))
         case .key(let value):
             key = value
         }
-        switch CustomProviderEngine.run(provider: provider, key: key).result {
+        switch CustomProviderEngine.run(provider: provider, key: key, appLanguage).result {
         case .entries(let entries):
             return .success(entries)
         case .needsCredits:
-            return .customState(.parseError("нет данных /credits"))
+            return .customState(.parseError(appLanguage == .en ? "no /credits data" : "нет данных /credits"))
         case .state(.ok):
             return .success([])
         case .state(let state):

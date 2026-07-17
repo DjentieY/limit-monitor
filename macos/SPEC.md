@@ -692,18 +692,29 @@ file, `--status [--json]`, NSPanel desktop card.
 - After every poll cycle the app atomically (temp file + rename) writes
   `~/Library/Application Support/limit-monitor/widget-snapshot.json`:
   ```json
-  { "version": 1, "generatedAt": "2026-07-17T09:00:00+00:00", "providers": [
-    { "id": "claude", "name": "Claude", "label": "Cl", "stale": false,
-      "limits": [ { "kind": "session", "label": "5-часовой", "windowLabel": "5h",
-        "percent": 9, "text": "9%", "level": "green",
-        "resetsAt": "2026-07-17T09:30:00+00:00", "exhausted": false } ] },
-    { "id": "deepseek", "name": "DeepSeek", "label": "DS", "stale": false,
-      "limits": [ { "kind": "custom", "label": "DeepSeek", "text": "$23.45",
-        "level": "green", "exhausted": false } ] } ] }
+  { "version": 2, "generatedAt": "2026-07-17T09:00:00+00:00", "providers": [
+    { "id": "claude", "name": "Claude", "label": "Cl", "stale": false, "limits": [
+      { "kind": "session", "windowLabel": "5h", "percent": 9, "text": "9%",
+        "level": "green", "resetsAt": "2026-07-17T09:30:00+00:00", "exhausted": false },
+      { "kind": "weekly_scoped", "scopeName": "Fable", "windowLabel": "7d",
+        "percent": 39, "text": "39%", "level": "green",
+        "resetsAt": "2026-07-20T08:00:00+00:00", "exhausted": false } ] },
+    { "id": "codex", "name": "Codex", "label": "Cx", "stale": false, "limits": [
+      { "kind": "session", "windowLabel": "5h", "windowMinutes": 335, "percent": 20,
+        "text": "20%", "level": "green", "resetsAt": "2026-07-17T13:00:00+00:00",
+        "exhausted": false } ] },
+    { "id": "deepseek", "name": "DeepSeek", "label": "DS", "stale": false, "limits": [
+      { "kind": "custom", "text": "$23.45", "level": "green", "exhausted": false } ] } ] }
   ```
-  Only providers with data; disabled providers excluded; NO secrets ever
-  (numbers, labels, ISO UTC times only). `--check` ALSO writes the snapshot on
-  success (so agents get a fresh file without the GUI).
+  Schema **v2** is fully NEUTRAL: the provider-level `label` (bar prefix) stays,
+  but each row drops the localized `label` and instead carries neutral structural
+  fields — `kind`, `scopeName` (brand/model, e.g. `Fable`), `windowLabel`,
+  `windowMinutes` (raw window size; classifies codex/config labels at
+  ±60/±1440 tolerance), `percent`/balance `text`, `level`, `resetsAt`. Readers
+  reconstruct the display label at render time in their own locale. Only providers
+  with data; disabled providers excluded; NO secrets ever (numbers, neutral tokens
+  and ISO UTC times only — never a localized string). `--check` ALSO writes the
+  snapshot on success (so agents get a fresh file without the GUI).
 - New CLI modes (before any AppKit setup, like `--check`):
   - `--status` — human RU table rendered FROM the snapshot file (per provider:
     rows with percent/balance, level word, reset time; header

@@ -4,7 +4,14 @@ import LimitMonitorCore
 // e2e smoke test: a section per provider; exit 0 iff every ACTIVE provider
 // fetched and parsed successfully (an inactive provider is not a failure).
 // Never prints tokens, account ids or any credential material.
+//
+// SPEC v0.6: --check is ALWAYS English — the diagnostic/CI/agent surface, so a
+// stable, locale-independent, greppable output. Every Core call is pinned to
+// `.en`; the local console literals are English inline (no catalog entry). The
+// output must contain NO Cyrillic.
 enum CheckMode {
+    private static let lang: Language = .en
+
     private enum SectionResult {
         case success([LimitEntry])
         case inactive(String)
@@ -25,14 +32,14 @@ enum CheckMode {
             print("")
             print("== \(id) ==")
             if disabled.contains(id) {
-                print("\(id): отключён в настройках")
+                print("\(id): disabled in settings")
                 return
             }
             switch section() {
             case .success(let limits):
                 groups.append(ProviderGroup(provider: id, limits: limits, stale: false))
             case .inactive(let reason):
-                print("\(id): неактивен (\(reason))")
+                print("\(id): inactive (\(reason))")
             case .failed:
                 failed = true
             }
@@ -56,9 +63,9 @@ enum CheckMode {
         if !failed {
             let snapshot = WidgetSnapshot.build(groups: groups, now: Date(), disabled: disabled)
             if SnapshotStore.write(snapshot) {
-                print("snapshot: записан \(SnapshotStore.fileURL.path)")
+                print("snapshot: written \(SnapshotStore.fileURL.path)")
             } else {
-                print("WARNING: snapshot не записан (\(SnapshotStore.fileURL.path))")
+                print("WARNING: snapshot not written (\(SnapshotStore.fileURL.path))")
             }
             print("")
         }
@@ -79,16 +86,16 @@ enum CheckMode {
         switch ProvidersConfigLoader.load() {
         case .missing(let path):
             print(ProvidersConfigLoader.isDefaultPath(path)
-                ? ProvidersConfigFile.missingCheckLine
-                : "custom: нет \(path)")
+                ? ConfigStr.missingCheck.text(lang)
+                : "custom: no \(path)")
             return false
         case .malformed(let path):
             print("config: \(path)")
-            print("ERROR: \(ProvidersConfigFile.malformedMenuRow)")
+            print("ERROR: \(ConfigStr.malformed.text(lang))")
             return true
         case .unsupportedVersion(let path):
             print("config: \(path)")
-            print("ERROR: \(ProvidersConfigFile.unsupportedVersionMenuRow)")
+            print("ERROR: \(ConfigStr.unsupportedVersion.text(lang))")
             return true
         case .loaded(let config, let path, let permissive):
             // SPEC v0.4: zero enabled entries → the same single line as a
@@ -96,25 +103,25 @@ enum CheckMode {
             // override or a chmod warning keeps the diagnostic form.
             if config.providers.isEmpty, config.errors.isEmpty, !permissive,
                ProvidersConfigLoader.isDefaultPath(path) {
-                print(ProvidersConfigFile.missingCheckLine)
+                print(ConfigStr.missingCheck.text(lang))
                 return false
             }
             print("config: \(path)")
             if permissive {
-                print("WARNING: \(ProvidersConfigFile.permissiveMenuRow)")
+                print("WARNING: \(ConfigStr.permissive.text(lang))")
             }
             var failed = false
             for error in config.errors {
-                print("ERROR: \(error.menuRow)")
+                print("ERROR: \(ConfigStr.entryError(name: error.name, reason: error.reason).text(lang))")
                 failed = true
             }
             if config.providers.isEmpty, config.errors.isEmpty {
-                print("custom: нет включённых провайдеров")
+                print("custom: no enabled providers")
             }
             for provider in config.providers {
                 print("")
                 if disabled.contains(provider.id) {
-                    print("\(provider.id): отключён в настройках")
+                    print("\(provider.id): disabled in settings")
                     continue
                 }
                 print("-- \(provider.name) (id \(provider.id), kind \(provider.kind.rawValue)) --")
@@ -130,20 +137,20 @@ enum CheckMode {
         print("key source: \(provider.key.sourceDescription)")
         print("host: \(provider.host.rawValue) · poll: \(provider.pollSeconds) s")
         let key: String
-        switch KeyResolver.resolve(provider.key) {
+        switch KeyResolver.resolve(provider.key, lang) {
         case .failure(let reason):
-            print("ERROR: \(MenuText.stateRow(name: provider.name, state: .keyError(reason)))")
+            print("ERROR: \(MenuText.stateRow(name: provider.name, state: .keyError(reason), lang))")
             return true
         case .key(let value):
             key = value
-            print("key: получен (значение не печатается)")
+            print("key: resolved (value not printed)")
         }
-        let outcome = CustomProviderEngine.run(provider: provider, key: key)
+        let outcome = CustomProviderEngine.run(provider: provider, key: key, lang)
         for step in outcome.steps {
             if let status = step.httpStatus {
                 print("GET \(step.url) → HTTP \(status)")
             } else {
-                print("GET \(step.url) → \(step.networkError ?? "нет ответа")")
+                print("GET \(step.url) → \(step.networkError ?? "no response")")
             }
         }
         switch outcome.result {
@@ -156,13 +163,13 @@ enum CheckMode {
             return false
         case .state(.info(let message)):
             // Informational, NOT a failure (openrouter /credits denied to this key).
-            print("\(MenuText.stateRow(name: provider.name, state: .info(message)))")
+            print("\(MenuText.stateRow(name: provider.name, state: .info(message), lang))")
             return false
         case .state(.ok), .needsCredits:
-            print("ERROR: \(MenuText.stateRow(name: provider.name, state: .parseError("нет данных")))")
+            print("ERROR: \(MenuText.stateRow(name: provider.name, state: .parseError("no data"), lang))")
             return true
         case .state(let state):
-            print("ERROR: \(MenuText.stateRow(name: provider.name, state: state))")
+            print("ERROR: \(MenuText.stateRow(name: provider.name, state: state, lang))")
             return true
         }
     }
@@ -171,7 +178,7 @@ enum CheckMode {
 
     private static func runClaude(now: Date) -> SectionResult {
         guard let loaded = CredentialsProvider.load() else {
-            return .inactive("нет учётных данных Claude Code: ни Keychain, ни ~/.claude/.credentials.json")
+            return .inactive("no Claude Code credentials: neither Keychain nor ~/.claude/.credentials.json")
         }
         print("credentials: \(loaded.source)")
         if loaded.creds.isExpired(now: now) {
@@ -197,21 +204,21 @@ enum CheckMode {
     private static func runCodex(now: Date) -> SectionResult {
         switch CodexCredentialsProvider.load() {
         case .missing(let path):
-            return .inactive("нет \(path)")
+            return .inactive("no \(path)")
         case .apiKeyOnly:
-            return .inactive("API-key режим — план-лимитов нет")
+            return .inactive("API-key mode — no plan limits")
         case .unreadable(let path):
-            return .inactive("\(path) без tokens.access_token")
+            return .inactive("\(path) without tokens.access_token")
         case .oauth(let auth, let path):
             print("credentials: \(path)")
             if let lastRefresh = auth.lastRefresh {
-                print("last_refresh: \(age(from: lastRefresh, to: now)) назад")
+                print("last_refresh: \(age(from: lastRefresh, to: now)) ago")
             } else {
-                print("last_refresh: отсутствует")
+                print("last_refresh: absent")
             }
             print(auth.accountID == nil
-                ? "account id: не найден — заголовок ChatGPT-Account-Id не отправляется"
-                : "account id: найден (значение не печатается)")
+                ? "account id: not found — the ChatGPT-Account-Id header is not sent"
+                : "account id: found (value not printed)")
             print("GET \(CodexUsageFetcher.primaryEndpoint.absoluteString) "
                 + "(fallback: \(CodexUsageFetcher.fallbackEndpoint.path)) ...")
             let outcome = CodexUsageFetcher.fetchSync(auth: auth, now: now)
@@ -238,17 +245,17 @@ enum CheckMode {
     private static func runCursor(now: Date) -> SectionResult {
         switch CursorCredentialsProvider.load() {
         case .missing, .emptyToken:
-            return .inactive("нет Cursor")
+            return .inactive("no Cursor")
         case .queryFailed:
-            return .inactive("state.vscdb сейчас недоступна (sqlite3 busy/lock) — повтори позже")
+            return .inactive("state.vscdb is currently unavailable (sqlite3 busy/lock) — retry later")
         case .badToken(let path, let segments):
             print("credentials: \(path)")
-            print("token: найден (\(segmentsWord(segments)), значение не печатается), sub НЕ извлечён — cookie не собрать")
-            print("ERROR: токен не разобран — обнови/перелогинь Cursor")
+            print("token: found (\(segmentsWord(segments)), value not printed), sub NOT extracted — cannot assemble cookie")
+            print("ERROR: token not parsed — update/re-login Cursor")
             return .failed
         case .ok(let cookie, let path, let segments):
             print("credentials: \(path)")
-            print("token: JWT, \(segmentsWord(segments)), sub найден (значения не печатаются)")
+            print("token: JWT, \(segmentsWord(segments)), sub found (values not printed)")
             print("GET \(CursorUsageFetcher.endpoint.absoluteString) ...")
             switch CursorUsageFetcher.fetchSync(cookie: cookie) {
             case .failure(.parseFailure(let keyTree)):
@@ -266,17 +273,7 @@ enum CheckMode {
     }
 
     private static func segmentsWord(_ count: Int) -> String {
-        let mod10 = count % 10
-        let mod100 = count % 100
-        let word: String
-        if mod10 == 1, mod100 != 11 {
-            word = "сегмент"
-        } else if (2...4).contains(mod10), !(12...14).contains(mod100) {
-            word = "сегмента"
-        } else {
-            word = "сегментов"
-        }
-        return "\(count) \(word)"
+        "\(count) \(count == 1 ? "segment" : "segments")"
     }
 
     // MARK: - Shared report
@@ -286,12 +283,12 @@ enum CheckMode {
         print("")
         print("menu rows:")
         for limit in limits {
-            print("  ● \(MenuText.infoRow(for: limit, now: now))")
+            print("  ● \(MenuText.infoRow(for: limit, now: now, lang))")
         }
         print("")
         print("title group: \(TitleFormatter.plainTitle(for: limits, stale: false))")
         print("")
-        let plan = NotificationPlanner.plan(limits: limits, now: now, alreadyNotified: [:])
+        let plan = NotificationPlanner.plan(limits: limits, now: now, alreadyNotified: [:], lang)
         print("planned reset notifications (\(plan.scheduled.count)):")
         for item in plan.scheduled {
             print("  \(item.identifier)")
@@ -317,7 +314,7 @@ enum CheckMode {
                 pad(value, 8),
                 pad(limit.level.name, 7),
                 pad(resets, 18),
-                Labels.menuLabel(for: limit),
+                Labels.menuLabel(for: limit, lang),
             ]
             print("  " + row.joined())
         }
@@ -325,14 +322,14 @@ enum CheckMode {
 
     private static func age(from past: Date, to now: Date) -> String {
         let minutes = max(0, Int(now.timeIntervalSince(past) / 60))
-        if minutes < 60 { return "\(minutes) мин" }
-        if minutes < 48 * 60 { return "\(minutes / 60) ч" }
-        return "\(minutes / 1440) дн"
+        if minutes < 60 { return "\(minutes) min" }
+        if minutes < 48 * 60 { return "\(minutes / 60) h" }
+        return "\(minutes / 1440) d"
     }
 
     private static let stampFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.locale = Locale(identifier: "ru_RU")
+        f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "dd.MM HH:mm"
         return f
     }()
