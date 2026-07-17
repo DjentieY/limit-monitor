@@ -173,18 +173,21 @@ public struct ConfiguredProvider: Equatable {
 public struct ConfigEntryError: Equatable {
     public var id: String?
     public var name: String
-    public var reason: String
+    /// Keyed reason (SPEC v0.7) so the whole config-error row renders in the
+    /// resolved language — no more mixed EN frame + RU reason.
+    public var reason: ConfigReason
 
-    public init(id: String?, name: String, reason: String) {
+    public init(id: String?, name: String, reason: ConfigReason) {
         self.id = id
         self.name = name
         self.reason = reason
     }
 
-    /// Kept as a property (used as a `\.menuRow` key path). The parse `reason`
-    /// itself is not yet keyed (deferred, design R5) so this stays RU; the shell
-    /// can render EN via `ConfigStr.entryError(name:reason:).text(lang)`.
-    public var menuRow: String { ConfigStr.entryError(name: name, reason: reason).text(.ru) }
+    /// Localized disabled menu / `--check` row:
+    /// `<name>: config error — <reason>` / `<name>: ошибка конфига — <reason>`.
+    public func menuRow(_ lang: Language) -> String {
+        ConfigStr.entryError(name: name, reason: reason.text(lang)).text(lang)
+    }
 }
 
 /// An `enabled: false` entry: skipped by the runtime entirely, but the
@@ -269,7 +272,7 @@ public enum ProvidersConfigParser {
 
         for rawEntry in (root["providers"] as? [Any]) ?? [] {
             guard let entry = rawEntry as? [String: Any] else {
-                errors.append(ConfigEntryError(id: nil, name: "?", reason: "запись не объект"))
+                errors.append(ConfigEntryError(id: nil, name: "?", reason: .notObject))
                 continue
             }
             if JSONPath.bool(entry["enabled"]) == false {
@@ -282,34 +285,34 @@ public enum ProvidersConfigParser {
 
             let idRaw = entry["id"] as? String
             let name = (entry["name"] as? String) ?? idRaw ?? "?"
-            func fail(_ reason: String) {
+            func fail(_ reason: ConfigReason) {
                 errors.append(ConfigEntryError(id: idRaw, name: name, reason: reason))
             }
 
             guard let id = idRaw, isValidID(id) else {
-                fail("недопустимый id (нужен слаг [a-z0-9-], без |)")
+                fail(.invalidID)
                 continue
             }
             guard !Provider.isBuiltin(id) else {
-                fail("id зарезервирован")
+                fail(.reservedID)
                 continue
             }
             guard !seenIDs.contains(id) else {
-                fail("дублирующийся id")
+                fail(.duplicateID)
                 continue
             }
             guard let kindRaw = entry["kind"] as? String, let kind = ConfigProviderKind(rawValue: kindRaw) else {
-                fail("неизвестный kind: \((entry["kind"] as? String) ?? "—")")
+                fail(.unknownKind((entry["kind"] as? String) ?? "—"))
                 continue
             }
             guard let key = parseKey(entry["key"]) else {
-                fail("key: нужен ровно один из literal/env/command")
+                fail(.keyNeedsExactlyOne)
                 continue
             }
             let host: ProviderHost
             if let hostRaw = entry["host"] as? String {
                 guard let parsed = ProviderHost(rawValue: hostRaw) else {
-                    fail("host: intl или cn")
+                    fail(.invalidHost)
                     continue
                 }
                 host = parsed
@@ -332,17 +335,17 @@ public enum ProvidersConfigParser {
 
             if kind == .genericHTTP {
                 guard let request = provider.request, !request.url.isEmpty else {
-                    fail("request.url отсутствует")
+                    fail(.requestURLMissing)
                     continue
                 }
                 if let method = (entry["request"] as? [String: Any])?["method"] as? String,
                    method.uppercased() != "GET" {
-                    fail("request.method: только GET")
+                    fail(.requestMethodGETOnly)
                     continue
                 }
                 guard let extract = provider.extract,
                       extract.balance != nil || extract.percentUsedPath != nil else {
-                    fail("extract: нужен balance или percentUsed")
+                    fail(.extractNeedsBalanceOrPercent)
                     continue
                 }
             }

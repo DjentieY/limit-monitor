@@ -108,7 +108,7 @@ invocation.
   Claude Code (running `codex`, opening Cursor) once refreshes it
   automatically; the app never refreshes tokens itself.
 - With several providers active the bar shows prefixed groups:
-  `Cl·… ‖ Cx·… ‖ Cu·…`.
+  `Cl·… ┃ Cx·… ┃ Cu·…` (separators configurable in Settings).
 - The app is ad-hoc signed: after a future update macOS may re-ask for
   notification permission. This is expected.
 

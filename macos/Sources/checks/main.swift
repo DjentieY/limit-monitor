@@ -78,8 +78,8 @@ check(legacy.allSatisfy { $0.resetsAt != nil }, "3. legacy resets_at parsed")
 
 // -- 4. Title formatting ------------------------------------------------------
 
-eq(TitleFormatter.separator, " \u{2502} ", "4. segment separator is U+2502")
-eq(TitleFormatter.providerSeparator, " \u{2016} ", "4. provider separator is U+2016")
+eq(TitleFormatter.defaultSegmentSeparator, " \u{2502} ", "4. default segment separator is U+2502")
+eq(TitleFormatter.defaultProviderSeparator, " \u{2503} ", "4. default provider separator is U+2503 (heavy vertical, v0.7)")
 let segments = TitleFormatter.segments(for: limits)
 eq(segments.map(\.text), ["5h●10%", "7d●23%", "7d●39% Fable"], "4. title segments")
 eq(segments.map(\.level), [Level.green, .green, .green], "4. per-segment levels green/green/green")
@@ -292,9 +292,9 @@ let bothGroups = [
 ]
 eq(TitleFormatter.plainTitle(groups: bothGroups),
    "Cl·5h●10% \u{2502} 7d●23% \u{2502} 7d●39% Fable"
-   + " \u{2016} "
+   + " \u{2503} "
    + "Cx·5h●12% \u{2502} 7d●40% \u{2502} 7d●55% Spark",
-   "12. two active providers → Cl·/Cx· groups joined by \u{2016}")
+   "12. two active providers → Cl·/Cx· groups joined by \u{2503} (v0.7 default)")
 eq(TitleFormatter.plainTitle(groups: [ProviderGroup(provider: Provider.claude, limits: limits, stale: false)]),
    "5h●10% \u{2502} 7d●23% \u{2502} 7d●39% Fable",
    "12. single provider → plain title without prefix")
@@ -302,14 +302,38 @@ let staleCodexGroups = [
     ProviderGroup(provider: Provider.claude, limits: limits, stale: false),
     ProviderGroup(provider: Provider.codex, limits: codexLimits, stale: true),
 ]
-check(TitleFormatter.plainTitle(groups: staleCodexGroups).contains(" \u{2016} ⚠Cx·"),
+check(TitleFormatter.plainTitle(groups: staleCodexGroups).contains(" \u{2503} ⚠Cx·"),
       "12. stale provider contributes ⚠ before its group prefix")
 let emptyCodexGroups = [
     ProviderGroup(provider: Provider.claude, limits: limits, stale: false),
     ProviderGroup(provider: Provider.codex, limits: [], stale: false),
 ]
-check(TitleFormatter.plainTitle(groups: emptyCodexGroups).hasSuffix(" \u{2016} Cx·…"),
+check(TitleFormatter.plainTitle(groups: emptyCodexGroups).hasSuffix(" \u{2503} Cx·…"),
       "12. active provider without data yet renders Cx·…")
+
+// -- v0.7. Configurable bar separators -------------------------------------------
+// Custom separators join exactly as passed (Core stays pure; the shell supplies
+// the user's UserDefaults overrides).
+eq(TitleFormatter.plainTitle(for: limits, stale: false, segmentSeparator: " / "),
+   "5h●10% / 7d●23% / 7d●39% Fable",
+   "v0.7. custom segment separator joins single-provider title exactly")
+eq(TitleFormatter.plainTitle(groups: bothGroups, segmentSeparator: "-", providerSeparator: " ~ "),
+   "Cl·5h●10%-7d●23%-7d●39% Fable ~ Cx·5h●12%-7d●40%-7d●55% Spark",
+   "v0.7. custom segment + provider separators join merged title exactly")
+// normalizedSeparator: empty/whitespace → default, >8 → truncate, trailing \n trimmed,
+// interior/edge spacing preserved.
+eq(TitleFormatter.normalizedSeparator(nil, default: TitleFormatter.defaultSegmentSeparator),
+   " \u{2502} ", "v0.7. nil override → default")
+eq(TitleFormatter.normalizedSeparator("", default: TitleFormatter.defaultProviderSeparator),
+   " \u{2503} ", "v0.7. empty override → default")
+eq(TitleFormatter.normalizedSeparator("   ", default: TitleFormatter.defaultProviderSeparator),
+   " \u{2503} ", "v0.7. whitespace-only override → default")
+eq(TitleFormatter.normalizedSeparator(" • ", default: TitleFormatter.defaultSegmentSeparator),
+   " • ", "v0.7. normal override kept verbatim incl. surrounding spaces")
+eq(TitleFormatter.normalizedSeparator("123456789", default: TitleFormatter.defaultSegmentSeparator),
+   "12345678", "v0.7. override > 8 chars truncated to 8")
+eq(TitleFormatter.normalizedSeparator(" | \n", default: TitleFormatter.defaultSegmentSeparator),
+   " | ", "v0.7. trailing newline trimmed, spacing preserved")
 
 // -- 13. JWT payload decode + codex auth.json parsing ------------------------------
 
@@ -514,11 +538,11 @@ let threeGroups = [
 ]
 eq(TitleFormatter.plainTitle(groups: threeGroups),
    "Cl·5h●10% \u{2502} 7d●23% \u{2502} 7d●39% Fable"
-   + " \u{2016} "
+   + " \u{2503} "
    + "Cx·5h●12% \u{2502} 7d●40% \u{2502} 7d●55% Spark"
-   + " \u{2016} "
+   + " \u{2503} "
    + "Cu·Auto●2% \u{2502} API●6%",
-   "20. three providers → Cl· ‖ Cx· ‖ Cu· in that order")
+   "20. three providers → Cl· ┃ Cx· ┃ Cu· in that order (v0.7 heavy separator)")
 eq(TitleFormatter.plainTitle(groups: [ProviderGroup(provider: Provider.cursor, limits: cursorLimits, stale: false)]),
    "Auto●2% \u{2502} API●6%",
    "20. cursor-only → no prefix")
@@ -580,12 +604,20 @@ guard case .parsed(let invalidConfig) = ProvidersConfigParser.parse(data: provid
 eq(invalidConfig.providers.count, 0, "21. invalid config yields no providers")
 eq(invalidConfig.errors.count, 3, "21. three per-entry config errors, no crash")
 eq(invalidConfig.errors.map(\.name), ["TwoKeys", "Mystery", "BadId"], "21. errors keep entry names")
-check(invalidConfig.errors[0].reason.contains("literal/env/command"),
-      "21. two key sources → key config-error")
-check(invalidConfig.errors[1].reason.contains("kind"), "21. unknown kind → config-error")
-check(invalidConfig.errors[2].reason.contains("id"), "21. | in id → config-error")
-eq(invalidConfig.errors[1].menuRow, "Mystery: ошибка конфига — неизвестный kind: quantum-ledger",
-   "21. config-error menu row form")
+eq(invalidConfig.errors[0].reason, ConfigReason.keyNeedsExactlyOne,
+   "21. two key sources → key config-error")
+eq(invalidConfig.errors[1].reason, ConfigReason.unknownKind("quantum-ledger"),
+   "21. unknown kind → config-error (keyed reason carries the raw kind)")
+eq(invalidConfig.errors[2].reason, ConfigReason.invalidID, "21. | in id → config-error")
+// v0.7: the config reason is now keyed → renders wholly in the resolved language.
+eq(invalidConfig.errors[1].reason.text(.ru), "неизвестный kind: quantum-ledger",
+   "v0.7. config reason RU byte-identical to pre-v0.7 string")
+eq(invalidConfig.errors[1].reason.text(.en), "unknown kind: quantum-ledger",
+   "v0.7. config reason EN localized")
+eq(invalidConfig.errors[1].menuRow(.ru), "Mystery: ошибка конфига — неизвестный kind: quantum-ledger",
+   "21/v0.7. config-error menu row RU (whole row Russian)")
+eq(invalidConfig.errors[1].menuRow(.en), "Mystery: config error — unknown kind: quantum-ledger",
+   "21/v0.7. config-error menu row EN (whole row English, no mixed Cyrillic)")
 check(ProviderState.configError("x").isCheckFailure, "21. config-error IS a --check failure")
 check(ProviderState.keyError(KeyResolutionStrings.commandFailed).isCheckFailure,
       "21. key-resolution failure IS a --check failure")
@@ -608,7 +640,8 @@ guard case .parsed(let dupConfig) = ProvidersConfigParser.parse(data: Data(dupJS
     exit(1)
 }
 eq(dupConfig.providers.map(\.id), ["dup"], "21. duplicate id: first entry still parses")
-eq(dupConfig.errors.map(\.reason), ["дублирующийся id"], "21. duplicate id: second entry → config-error")
+eq(dupConfig.errors.map(\.reason), [ConfigReason.duplicateID], "21. duplicate id: second entry → config-error")
+eq(dupConfig.errors.first?.reason.text(.ru), "дублирующийся id", "21/v0.7. duplicate-id reason RU byte-identical")
 eq(dupConfig.errors.first?.name, "Second", "21. duplicate-id error keeps the entry name")
 
 // -- 22. Dot-path extraction + Decimal ---------------------------------------------
@@ -958,9 +991,9 @@ if let orBalanceEntry {
     ]
     eq(TitleFormatter.plainTitle(groups: mixedGroups),
        "Cl·5h●10% \u{2502} 7d●23% \u{2502} 7d●39% Fable"
-       + " \u{2016} " + "OR·●$74.75"
-       + " \u{2016} " + "GLM·5h●37% \u{2502} 7d●12%",
-       "30. Cl· ‖ OR· ‖ GLM· merged title with config label prefixes")
+       + " \u{2503} " + "OR·●$74.75"
+       + " \u{2503} " + "GLM·5h●37% \u{2502} 7d●12%",
+       "30. Cl· ┃ OR· ┃ GLM· merged title with config label prefixes (v0.7 separator)")
     eq(TitleFormatter.plainTitle(groups: [
         ProviderGroup(provider: orProvider.id, limits: [orBalanceEntry], stale: false,
                       titlePrefix: orProvider.titlePrefix),
@@ -969,7 +1002,7 @@ if let orBalanceEntry {
         ProviderGroup(provider: Provider.claude, limits: limits, stale: false),
         ProviderGroup(provider: glmProvider.id, limits: glmEntries, stale: true,
                       titlePrefix: glmProvider.titlePrefix),
-    ]).contains(" \u{2016} ⚠GLM·"), "30. stale config provider gets ⚠ before its label prefix")
+    ]).contains(" \u{2503} ⚠GLM·"), "30. stale config provider gets ⚠ before its label prefix")
 } else {
     check(false, "30. openrouter balance entry available for the title merge")
 }

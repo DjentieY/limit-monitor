@@ -10,6 +10,25 @@ changes its API.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-17
+
+### Added
+
+- **Configurable bar separators** — a *Separators* section in Settings lets you
+  set the string between providers and between a provider's limits (with a live
+  preview and a reset button); applied instantly.
+
+### Changed
+
+- The default between-provider separator is now `┃` (heavy vertical), giving a
+  clearer thin/heavy hierarchy with the within-provider `│`.
+- `providers.json` parse errors are now localized, so the English UI stays fully
+  English even on a malformed config.
+
+### Docs
+
+- The install instructions moved above the feature list in the README.
+
 ## [0.6.0] - 2026-07-17
 
 Internationalization: the UI is now **English by default** and switches to
@@ -77,6 +96,7 @@ and balances. Consolidates the internal `v0.1`–`v0.5` milestones.
   provider token.
 - UI is currently Russian; English localization is in progress.
 
-[Unreleased]: https://github.com/DjentieY/limit-monitor/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/DjentieY/limit-monitor/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/DjentieY/limit-monitor/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/DjentieY/limit-monitor/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/DjentieY/limit-monitor/releases/tag/v0.5.0

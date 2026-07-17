@@ -243,6 +243,10 @@ mentioned stays as specified above.
 - **Segment separator** (supersedes v0.1 `·` and the ` || ` interim): segments
   within a provider are joined by ` │ ` (U+2502), `TitleFormatter.separator`.
   Provider groups are joined by ` ‖ ` (U+2016), `TitleFormatter.providerSeparator`.
+  **SUPERSEDED by v0.7**: the constants are renamed
+  `defaultSegmentSeparator`/`defaultProviderSeparator`, the provider-group
+  default changes to ` ┃ ` (U+2503), and both are user-configurable — see
+  "v0.7 — Configurable bar separators".
 - Title (status item): with ONE active provider — single-provider format, no
   prefix, e.g. `5h●45% │ 7d●30% │ 7d●52% Fable`. With >1 active: provider groups
   joined by ` ‖ `, each group prefixed `Cl·` / `Cx·` / `Cu·`, e.g.

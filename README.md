@@ -16,7 +16,7 @@ resets or hits 100%.
 and with several providers logged in:
 
 ```
-Cl·5h●42% │ 7d●29% │ 7d●51% Fable ‖ Cx·5h●12% │ 7d●40% ‖ Cu·Auto●2% │ API●6%
+Cl·5h●42% │ 7d●29% │ 7d●51% Fable ┃ Cx·5h●12% │ 7d●40% ┃ Cu·Auto●2% │ API●6%
 ```
 
 Each limit gets its own colored dot: green &lt;50%, yellow ≥50%, orange ≥75%,
@@ -30,6 +30,41 @@ config file: OpenRouter, DeepSeek, Moonshot Kimi, Zhipu GLM, SiliconFlow,
 Novita out of the box, and a generic HTTP adapter for the rest — see
 [Custom providers (balances)](#custom-providers-balances). **Next:** see
 [Roadmap](#roadmap).
+
+## Install (macOS)
+
+Requires macOS 13+, [Claude Code](https://claude.com/claude-code) logged in,
+and the Xcode Command Line Tools (`xcode-select --install`).
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/DjentieY/limit-monitor/main/install.sh | sh
+```
+
+The script builds the app locally, installs `Limit Monitor.app` into
+`~/Applications` and launches it (upgrading from the old `Claude Limits.app`
+removes it first). If the old app had autostart enabled, re-enable
+«Запускать при входе» in the new app's menu and remove the orphaned
+"Claude Limits" entry in System Settings → Login Items — login-item
+registrations are tied to the bundle id and cannot be migrated. Building
+locally means the app is never quarantined — no Gatekeeper friction, no
+$99/yr certificate. Click **Allow** on the notification permission prompt,
+and enable autostart via the app menu.
+
+### Prebuilt release (alternative)
+
+Each tagged release ships a prebuilt Apple-Silicon `Limit Monitor.app` on the
+[Releases page](https://github.com/DjentieY/limit-monitor/releases/latest)
+(with a `.sha256` checksum). Because the build is ad-hoc signed rather than
+notarized, macOS quarantines anything downloaded from the web, so clear the
+flag after unzipping:
+
+```sh
+xattr -dr com.apple.quarantine "Limit Monitor.app"
+mv "Limit Monitor.app" ~/Applications/
+```
+
+The source install above avoids this step entirely, works on Intel Macs too,
+and is the recommended path.
 
 ## Features
 
@@ -53,7 +88,9 @@ Novita out of the box, and a generic HTTP adapter for the rest — see
   see [Custom providers (balances)](#custom-providers-balances)
 - **Settings window** («Настройки…», ⌘,) with a checkbox per provider —
   untick one and it instantly stops polling and disappears from the bar,
-  menu, notifications and snapshot; tick it back and it refreshes immediately
+  menu, notifications and snapshot; tick it back and it refreshes immediately;
+  also lets you customize the bar **separators** (between providers and between
+  limits) with a live preview
 - **Desktop card** — an optional always-visible mini-dashboard pinned just
   above the desktop icons (toggle «Виджет на рабочем столе»): every enabled
   provider with its colored dots, values and reset times; drag it anywhere,
@@ -96,7 +133,7 @@ balance or quota** — configured, not hardcoded. Create
 and the bar grows a `<label>·` group per entry:
 
 ```
-Cl·5h●42% │ 7d●29% ‖ OR·●$74.75 ‖ GLM·5h●37% │ 7d●12%
+Cl·5h●42% │ 7d●29% ┃ OR·●$74.75 ┃ GLM·5h●37% │ 7d●12%
 ```
 
 Wallet-style providers render the remaining balance (`●$74.75`, `●¥12.35`)
@@ -187,41 +224,6 @@ plugin (`~/SwiftBar/limits.1m.sh`, `chmod +x`) is one line:
   Russian system (menu, notifications, settings, desktop card, `--status`)
 - [ ] A README screenshot
 
-## Install (macOS)
-
-Requires macOS 13+, [Claude Code](https://claude.com/claude-code) logged in,
-and the Xcode Command Line Tools (`xcode-select --install`).
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/DjentieY/limit-monitor/main/install.sh | sh
-```
-
-The script builds the app locally, installs `Limit Monitor.app` into
-`~/Applications` and launches it (upgrading from the old `Claude Limits.app`
-removes it first). If the old app had autostart enabled, re-enable
-«Запускать при входе» in the new app's menu and remove the orphaned
-"Claude Limits" entry in System Settings → Login Items — login-item
-registrations are tied to the bundle id and cannot be migrated. Building
-locally means the app is never quarantined — no Gatekeeper friction, no
-$99/yr certificate. Click **Allow** on the notification permission prompt,
-and enable autostart via the app menu.
-
-### Prebuilt release (alternative)
-
-Each tagged release ships a prebuilt Apple-Silicon `Limit Monitor.app` on the
-[Releases page](https://github.com/DjentieY/limit-monitor/releases/latest)
-(with a `.sha256` checksum). Because the build is ad-hoc signed rather than
-notarized, macOS quarantines anything downloaded from the web, so clear the
-flag after unzipping:
-
-```sh
-xattr -dr com.apple.quarantine "Limit Monitor.app"
-mv "Limit Monitor.app" ~/Applications/
-```
-
-The source install above avoids this step entirely, works on Intel Macs too,
-and is the recommended path.
-
 ## Install with your AI coding agent
 
 Paste this into Claude Code, Cursor, Codex — any coding agent running on the
@@ -267,7 +269,8 @@ enabled) on-demand buckets all reset at the end of the billing cycle, and an
 unlimited plan shows as a single green `∞`.
 
 With one provider active the bar shows plain segments; with several, groups
-are prefixed `Cl·` / `Cx·` / `Cu·` and joined by `‖`.
+are prefixed `Cl·` / `Cx·` / `Cu·` and joined by `┃` (a thin `│` separates
+limits within a provider). Both separators are configurable in Settings.
 
 If a token has expired the app shows `⚠` on that provider's group and keeps
 the last data — just use Claude Code (run `codex`, open Cursor) and each tool
@@ -277,7 +280,7 @@ Cursor and force you to re-login).
 
 Notes:
 
-- UI language is currently Russian; localization is planned.
+- The UI is English by default and switches to Russian on a Russian system.
 - The app is ad-hoc signed. macOS ties notification permission to the signing
   identity, so after an update you may be asked for notification permission
   again.
